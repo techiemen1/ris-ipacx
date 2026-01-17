@@ -1,0 +1,79 @@
+/* Flatpickr core styles (used by DateRangePicker) */
+@import 'react-date-range/dist/styles.css';
+@import 'react-date-range/dist/theme/default.css';
+
+/* optional: tiny plugin style if needed (flatpickr-range-plugin doesn't need extra css usually)
+@import "flatpickr/dist/plugins/rangePlugin.css";
+*/
+
+/* (existing global rules follow) */
+:root {
+    --bg: #f8fafc;
+    --panel: #fff;
+    --muted: #6b7280;
+    --accent: #2563eb
+}
+
+* {
+    box-sizing: border-box
+}
+
+html {
+    font-size: 16px;
+}
+
+body {
+    margin: 0;
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+    color: var(--accent)
+}
+
+/* .container{max-width:1200px;margin:0 auto;padding:16px} */
+.panel {
+    background: var(--panel);
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(2, 6, 23, 0.06);
+    border: 1px solid #e6eef4
+}
+
+.grid {
+    display: grid;
+    gap: 16px
+}
+
+.grid-3 {
+    grid-template-columns: 1fr 320px
+}
+
+.flex {
+    display: flex;
+    align-items: center
+}
+
+.btn {
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: #fff
+}
+
+.small {
+    font-size: 0.9rem;
+    color: var(--muted)
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
