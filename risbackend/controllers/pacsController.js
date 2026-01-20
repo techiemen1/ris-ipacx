@@ -155,7 +155,7 @@ exports.syncStudies = async (req, res) => {
 exports.create = async (req, res) => {
   try {
     const data = req.body;
-    constcreated = await PACSModel.create(data);
+    const created = await PACSModel.create(data);
     return res.status(201).json({ success: true, data: created });
   } catch (err) {
     console.error('pacs.create', err);

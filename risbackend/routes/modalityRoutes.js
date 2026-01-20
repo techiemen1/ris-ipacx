@@ -29,10 +29,10 @@ router.post('/', async (req, res) => {
         // Also update server whitelist if we were filtering...
         // require('../services/mwlServer').updateWhitelist(); 
 
-        res.json({ success: true, data: r.rows[0] });
+        res.status(201).json({ success: true, data: r.rows[0] });
     } catch (err) {
         console.error(err);
-        if (err.code === '23505') return res.status(400).json({ success: false, message: "AE Title already exists" });
+        if (err.code === '23505') return res.status(409).json({ success: false, message: "AE Title already exists" });
         res.status(500).json({ success: false, error: err.message });
     }
 });

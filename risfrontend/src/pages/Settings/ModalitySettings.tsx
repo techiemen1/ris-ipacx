@@ -26,6 +26,7 @@ export default function ModalitySettings() {
     const [modalities, setModalities] = useState<Modality[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
     // Form State
     const [newName, setNewName] = useState("");
@@ -68,6 +69,9 @@ export default function ModalitySettings() {
             setNewAET("");
             setNewIP("");
             setNewPort(104);
+            setError(null);
+            setSuccessMsg("Modality added successfully");
+            setTimeout(() => setSuccessMsg(null), 3000);
             load();
         } catch (err: any) {
             setError(err.response?.data?.message || err.message);
@@ -97,6 +101,11 @@ export default function ModalitySettings() {
                         {error && (
                             <div className="text-xs text-red-600 bg-red-50 p-2 rounded flex items-center gap-2">
                                 <AlertCircle size={12} /> {error}
+                            </div>
+                        )}
+                        {successMsg && (
+                            <div className="text-xs text-emerald-600 bg-emerald-50 p-2 rounded flex items-center gap-2">
+                                <CheckCircle2 size={12} /> {successMsg}
                             </div>
                         )}
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
