@@ -6,14 +6,18 @@ import axios from "axios";
  */
 
 const axiosInstance = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || "/api",
-  withCredentials: true,
+  // Dynamically set baseURL: If env var exists, use it. 
+  // Otherwise build it from current window.location to support LAN (e.g. 192.168.x.x:5000)
+  baseURL: import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:5000/api`,
+  withCredentials: false, // Disabled to avoid CORS credential issues on LAN (we use Bearer token)
   headers: {
     "Cache-Control": "no-cache",
     Pragma: "no-cache",
     Expires: "0",
   },
 });
+
+console.warn("🚀 Axios Base URL:", axiosInstance.defaults.baseURL);
 
 /* ================= REQUEST INTERCEPTOR ================= */
 
@@ -67,6 +71,14 @@ axiosInstance.interceptors.response.use(
       // soft-fail for optional endpoints
       return Promise.resolve({ data: { success: false } });
     }
+
+    console.error("❌ AXIOS ERROR:", {
+      message: error.message,
+      code: error.code,
+      url: error.config?.url,
+      baseURL: error.config?.baseURL,
+      fullUrl: (error.config?.baseURL || '') + (error.config?.url || '')
+    });
 
     return Promise.reject(error);
   }

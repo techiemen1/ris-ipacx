@@ -13,17 +13,18 @@ fi
 # Start Backend
 echo "🔹 Starting Backend..."
 cd risbackend
+pm2 delete ris-backend 2>/dev/null || true
 pm2 start server.js --name "ris-backend" --watch
 cd ..
 
-# Start Frontend (Development mode)
-# For prod, you'd verify build, but assuming dev flow for now
+# Start Frontend (Vite mode)
 echo "🔹 Starting Frontend..."
 cd risfrontend
-# Usually frontend runs in foreground in terminal, or we can background it.
-# Let's just output instruction for frontend or run it in background logging to file
+# Run Vite with --host for LAN access
 nohup npm start > ../frontend.log 2>&1 &
 echo "✅ Frontend running in background (log: frontend.log)"
 
-echo "🌟 System Started! Access at http://localhost:3000"
+echo "🌟 System Started!"
+echo "   - Frontend: http://localhost:3000"
+echo "   - Backend:  http://localhost:5000"
 echo "   Use 'pm2 log' to see backend logs."

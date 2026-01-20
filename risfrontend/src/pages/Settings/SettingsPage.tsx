@@ -18,10 +18,8 @@ const TABS = [
   { id: "system", label: "System & Security" },
   { id: "org", label: "Organization" },
   { id: "users", label: "Users & Roles" },
-  { id: "pacs", label: "PACS / DICOM" },
+  { id: "dicom", label: "DICOM Network" }, // Merged Tab
   { id: "clinical", label: "Clinical Workflow" },
-  { id: "refdata", label: "Reference Data" },
-  { id: "modalities", label: "Modalities" },
   { id: "billing", label: "Billing & GST" },
   { id: "templates", label: "Report Templates" },
   { id: "ai", label: "AI & Reporting" },
@@ -344,21 +342,74 @@ export default function SettingsPage() {
           </Card>
         )}
 
-        {active === "pacs" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>PACS / DICOM Settings</CardTitle>
-            </CardHeader>
+        {active === "dicom" && (
+          <div className="space-y-6">
+            {/* Header / Status Banner */}
+            <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
+              <div className="relative z-10 p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                <div>
+                  <h2 className="text-2xl font-bold flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                    DICOM Network Center
+                  </h2>
+                  <p className="text-blue-100 mt-1 max-w-lg text-sm">
+                    Manage your imaging network connectivity. Configure the RIS Modality Worklist (MWL) server and define external PACS destinations for routing.
+                  </p>
+                </div>
 
-            <CardContent>
-              <div className="mb-4 text-sm text-gray-600">
-                Configure Orthanc / DCM4CHEE / DICOMweb entries used by the system.
+                <div className="bg-white/10 backdrop-blur-md rounded-lg p-4 border border-white/20 min-w-[200px]">
+                  <div className="text-xs text-blue-200 uppercase tracking-widest font-semibold mb-1">RIS Server Status</div>
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                    </span>
+                    <span className="font-mono text-xl font-bold">ONLINE</span>
+                  </div>
+                  <div className="mt-2 text-xs font-mono text-blue-100 flex items-center gap-3">
+                    <span>AE: <strong className="text-white">RIS_MWL</strong></span>
+                    <span>|</span>
+                    <span>Port: <strong className="text-white">11112</strong></span>
+                  </div>
+                </div>
               </div>
 
-              {/* embed your existing PACSManagement */}
-              <PACSManagement />
-            </CardContent>
-          </Card>
+              {/* Decorative background shapes */}
+              <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-white/5 rounded-full blur-3xl"></div>
+              <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-40 h-40 bg-blue-500/20 rounded-full blur-2xl"></div>
+            </div>
+
+            {/* Split View: Modalities & PACS */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+
+              {/* Left Column: Modalities (Inbound) */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-slate-700 font-semibold px-1">
+                  <div className="p-1.5 bg-emerald-100 text-emerald-600 rounded-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></svg>
+                  </div>
+                  <span>Inbound: Modalities</span>
+                </div>
+                <div className="">
+                  <ModalitySettings />
+                </div>
+              </div>
+
+              {/* Right Column: PACS (Outbound) */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-slate-700 font-semibold px-1">
+                  <div className="p-1.5 bg-violet-100 text-violet-600 rounded-md">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5" /><path d="m5 12 7-7 7 7" /></svg>
+                  </div>
+                  <span>Outbound: External PACS</span>
+                </div>
+                <div className="">
+                  <PACSManagement />
+                </div>
+              </div>
+
+            </div>
+          </div>
         )}
 
         {active === "clinical" && (
@@ -366,7 +417,6 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Clinical & Workflow</CardTitle>
             </CardHeader>
-
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -378,7 +428,6 @@ export default function SettingsPage() {
                     }
                   />
                 </div>
-
                 <div>
                   <label className="block text-sm mb-1">Accession prefix</label>
                   <Input
@@ -387,7 +436,6 @@ export default function SettingsPage() {
                   />
                 </div>
               </div>
-
               <div className="mt-4">
                 <Button onClick={() => saveKey("clinical", clinical)} disabled={saving}>Save Clinical Settings</Button>
               </div>
@@ -395,41 +443,21 @@ export default function SettingsPage() {
           </Card>
         )}
 
-        {active === "templates" && (
-          <ReportTemplatesManager />
-        )}
-
+        {active === "templates" && <ReportTemplatesManager />}
         {active === "ai" && (
           <Card>
-            <CardHeader>
-              <CardTitle>AI & Reporting</CardTitle>
-            </CardHeader>
-
+            <CardHeader><CardTitle>AI & Reporting</CardTitle></CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm mb-1">AI model</label>
-                  <Input value={ai?.model ?? "gpt-4o-mini"} onChange={(e) => updateNested(["ai", "model"], e.target.value)} />
-                </div>
-
-                <div>
-                  <label className="block text-sm mb-1">AI temperature</label>
-                  <Input type="number" value={ai?.temp ?? 0.25} onChange={(e) => updateNested(["ai", "temp"], Number(e.target.value))} />
-                </div>
+                <div><label className="block text-sm mb-1">AI model</label><Input value={ai?.model ?? "gpt-4o-mini"} onChange={(e) => updateNested(["ai", "model"], e.target.value)} /></div>
+                <div><label className="block text-sm mb-1">AI temperature</label><Input type="number" value={ai?.temp ?? 0.25} onChange={(e) => updateNested(["ai", "temp"], Number(e.target.value))} /></div>
               </div>
-
-              <div className="mt-4">
-                <Button onClick={() => saveKey("ai", ai)} disabled={saving}>Save AI Settings</Button>
-              </div>
+              <div className="mt-4"><Button onClick={() => saveKey("ai", ai)} disabled={saving}>Save AI Settings</Button></div>
             </CardContent>
           </Card>
         )}
-
         {active === "billing" && <BillingSettingsManager />}
-
         {active === "refdata" && <ReferenceDataManager />}
-
-        {active === "modalities" && <ModalitySettings />}
 
         {active === "devops" && (
           <Card>

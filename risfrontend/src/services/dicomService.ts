@@ -58,5 +58,5 @@ export const fetchInstances = async (pacsId: number, studyId: string) => {
 
 export const getInstanceThumbnail = (pacsId: number | undefined, instanceId: string) => {
   if (!pacsId) return '';
-  return `${process.env.REACT_APP_API_URL || ''}/api/pacs/thumbnail/${pacsId}/${encodeURIComponent(instanceId)}`;
+  return `${import.meta.env.VITE_API_URL || ''}/api/pacs/thumbnail/${pacsId}/${encodeURIComponent(instanceId)}`;
 };

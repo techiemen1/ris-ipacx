@@ -2,7 +2,8 @@
 
 /* A4 Page Layout */
 .print-layout-container {
-  background-color: #e5e7eb; /* gray-200 */
+  background-color: #e5e7eb;
+  /* gray-200 */
   padding: 2rem;
   overflow-y: auto;
   height: 100%;
@@ -71,6 +72,7 @@
   z-index: 2;
 }
 
+
 .ProseMirror .column-resize-handle {
   background-color: #adf;
   bottom: -2px;
@@ -79,4 +81,13 @@
   pointer-events: none;
   top: 0;
   width: 4px;
+}
+
+/* FIX: Force Side-by-Side Images (Override Tailwind Prose/Block defaults) */
+.ProseMirror img {
+  display: inline-block !important;
+  margin: 4px !important;
+  vertical-align: top !important;
+  float: none !important;
+  /* Ensure flow layout */
 }

@@ -15,7 +15,7 @@ const DebugPanel: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  if (process.env.NODE_ENV === "production") return null;
+  if (import.meta.env.MODE === "production") return null;
 
   return (
     <div

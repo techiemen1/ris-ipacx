@@ -19,7 +19,10 @@ const app = express();
 /* =========================================================
    Security Middleware
 ========================================================= */
-app.use(helmet());
+/* =========================================================
+   Security Middleware
+========================================================= */
+// app.use(helmet()); // Temporarily disabled for LAN debugging
 app.use(compression());
 app.use(
   rateLimit({
@@ -30,23 +33,18 @@ app.use(
   })
 );
 
+// DEBUG LOGGING
+app.use((req, res, next) => {
+  console.log(`[INCOMING] ${req.method} ${req.url} | Origin: ${req.headers.origin} | IP: ${req.ip}`);
+  next();
+});
+
 /* =========================================================
    CORS — LAN + localhost only
 ========================================================= */
 app.use(
   cors({
-    origin: function (origin, cb) {
-      if (!origin) return cb(null, true); // Postman / curl
-      if (
-        origin.startsWith("http://localhost") ||
-        origin.startsWith("http://127.0.0.1") ||
-        origin.startsWith("http://192.168.")
-      ) {
-        return cb(null, true);
-      }
-      console.log("❌ CORS BLOCKED:", origin);
-      return cb(new Error("Blocked by CORS"), false);
-    },
+    origin: true, // Allow all origins (Reflects request origin)
     credentials: true,
   })
 );
@@ -187,6 +185,10 @@ app.use((err, req, res, next) => {
       const r = await pool.query("SELECT current_database() AS db");
       console.log(`📦 Connected to Postgres: ${r.rows[0].db}`);
     }
+
+    // Start Native MWL Server
+    const { startMwlServer } = require('./services/mwlServer');
+    startMwlServer();
   } catch (err) {
     console.error("❌ DB startup error:", err.message || err);
   }

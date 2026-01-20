@@ -9,6 +9,7 @@ const ctrl = require("../controllers/studyController");
  * Study metadata used by ReportEditor header
  * GET /api/studies/:studyUID/meta
  */
+router.get("/", auth, ctrl.getAllStudies);
 router.get("/:studyUID/meta", auth, ctrl.getStudyMeta);
 
 

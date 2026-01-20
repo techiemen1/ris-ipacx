@@ -75,6 +75,13 @@ export default function ReportEditor({
   const [keyImages, setKeyImages] = useState<KeyImage[]>([]);
   const [loading, setLoading] = useState(!initialPatient);
 
+  // Sync patient if initialPatient changes (Split View switching)
+  useEffect(() => {
+    if (initialPatient) {
+      setPatient(initialPatient);
+    }
+  }, [initialPatient]);
+
   // Settings
   const [orgSettings, setOrgSettings] = useState<{ name?: string, address?: string, logo?: string }>({});
   const [showKeyImages, setShowKeyImages] = useState(false); // Toggle for key images panel
@@ -119,6 +126,9 @@ export default function ReportEditor({
   );
 
   // Unified Data Fetching
+  const [reportContent, setReportContent] = useState<string | null>(null);
+
+  // 1. Fetch Data (Only re-run if studyUID changes)
   useEffect(() => {
     if (!studyUID) return;
 
@@ -133,18 +143,12 @@ export default function ReportEditor({
 
         // 1. Fetch Meta
         if (needsMeta) {
-          // NOTE: Ensure your backend route is actually /studies/:id/meta OR /pacs/studies/:id/meta
-          // Depending on your backend. Assuming /studies for now.
           promises.push(
             axiosInstance.get(`/studies/${studyUID}/meta`).then((r) => {
               if (r.data?.success) {
                 setPatient((prev) => ({ ...prev, ...r.data.data }));
-              } else {
-                console.warn("Meta fetch returned success=false");
               }
-            }).catch(err => {
-              console.warn("Meta fetch failed", err);
-            })
+            }).catch(err => console.warn("Meta fetch failed", err))
           );
         }
 
@@ -154,11 +158,9 @@ export default function ReportEditor({
             const d = r.data?.data;
             if (d) {
               setStatus(d.status || "draft");
-              if (editor && d.content && editor.isEmpty) {
-                editor.commands.setContent(d.content);
-              }
+              if (d.content) setReportContent(d.content);
             }
-          }).catch(() => { /* Report might not exist yet, ignore 404 */ })
+          }).catch(() => { /* Report might not exist yet */ })
         );
 
         // 3. Fetch Organization Settings
@@ -178,9 +180,15 @@ export default function ReportEditor({
       }
     };
 
-    if (studyUID) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studyUID, editor]); // Removing patient from dep array to avoid loops
+    load();
+  }, [studyUID, initialPatient]);
+
+  // 2. Update Editor Content (Only when editor is ready and content is fetched)
+  useEffect(() => {
+    if (editor && reportContent && editor.isEmpty) {
+      editor.commands.setContent(reportContent);
+    }
+  }, [editor, reportContent]);
 
 
   // Helper to format DICOM date (YYYYMMDD) or ISO date
@@ -218,6 +226,16 @@ export default function ReportEditor({
     }),
     [patient]
   );
+
+  // Effect to update title when Body Part changes
+  useEffect(() => {
+    const titleInput = document.getElementById('report-title-input') as HTMLInputElement;
+    if (titleInput && header.bodyPart) {
+      const modalityPrefix = header.modality ? `${header.modality} ` : "";
+      // Simplified title format as requested: [BODYPART] [MODALITY] RADIOLOGY REPORT
+      titleInput.value = `${header.bodyPart.toUpperCase()} ${modalityPrefix}RADIOLOGY REPORT`.trim();
+    }
+  }, [header.bodyPart, header.modality]);
 
   // 3. Key Images
   const loadKeyImages = React.useCallback(async () => {
@@ -259,9 +277,8 @@ export default function ReportEditor({
   };
 
   const insertKeyImageToEditor = (img: KeyImage) => {
-    // Insert with float:left to force side-by-side flow.
-    // We add margin-right and bottom to separate them.
-    const html = `<img src="/api/uploads/keyimages/${img.file_path}" width="200" style="width: 200px; height: auto; float: left; margin: 0 10px 10px 0; display: block;" />`;
+    // Insert with inline-block for proper flow
+    const html = `<img src="/api/uploads/keyimages/${img.file_path}" width="220" style="width: 220px; height: auto; display: inline-block; vertical-align: top; margin: 4px;" />`;
     editor?.chain().focus().insertContent(html).run();
   };
 
@@ -597,11 +614,12 @@ export default function ReportEditor({
               <div className="mb-6 text-center group/title cursor-pointer relative" onClick={() => (document.getElementById('report-title-input') as HTMLInputElement)?.focus()}>
                 <input
                   id="report-title-input"
-                  className="w-full text-center text-xl font-bold text-slate-900 uppercase underline decoration-2 underline-offset-4 bg-transparent border-none focus:ring-0 focus:outline-none placeholder:text-slate-300"
-                  placeholder="ENTER REPORT TITLE"
-                  key={header.bodyPart} // Force re-render if body part changes initially
-                  defaultValue={`${header.bodyPart ? header.bodyPart + ' ' : ''}${header.modality} ${orgSettings.name ? "" : "Study"} Radiology Report`.toUpperCase()}
+                  type="text"
+                  defaultValue={(`${header.bodyPart.toUpperCase()} ${header.modality ? header.modality + ' ' : ''}RADIOLOGY REPORT`).trim()}
+                  className="w-full text-center font-bold tracking-tight text-slate-900 border-none focus:ring-0 bg-transparent uppercase placeholder:text-slate-300 text-lg py-1"
+                  placeholder="REPORT TITLE..."
                 />
+
                 <div className="text-[10px] text-slate-300 mt-1 opacity-0 group-hover/title:opacity-100 transition-opacity">Editable Title</div>
               </div>
 
@@ -636,8 +654,9 @@ export default function ReportEditor({
                     {orgSettings.address || "123 Medical Drive, Health City"}
                   </div>
 
-                  {/* Line 2 - Super Compact Single Line Force */}
-                  <div className="flex flex-nowrap justify-center items-center gap-x-2 text-[10px] text-slate-400 overflow-hidden whitespace-nowrap">
+                  {/* Line 2 - Compact Single Line (Increased Font) */}
+                  {/* Line 2 - Compact Wrapped Line */}
+                  <div className="flex justify-center items-center gap-x-3 text-[11px] text-slate-600 px-4 whitespace-nowrap overflow-hidden text-ellipsis">
                     {(orgSettings as any).enquiryPhone && <span>📞 {(orgSettings as any).enquiryPhone}</span>}
                     {(orgSettings as any).contactPhone && (
                       <>
@@ -678,8 +697,8 @@ export default function ReportEditor({
                     <div key={img.id} className="relative group bg-white rounded-lg border border-slate-200 shadow-sm hover:shadow-md hover:border-blue-400 transition-all overflow-hidden flex flex-col w-full min-w-0"
                       draggable
                       onDragStart={(e) => {
-                        // FIX: Use float: left for consistent wrap-around behavior and side-by-side
-                        const html = `<img src="/api/uploads/keyimages/${img.file_path}" alt="Key Image" width="200" style="width: 200px; height: auto; float: left; margin: 0 10px 10px 0; display: block;" />`;
+                        // FIX: Use inline-block with vertical-align for reliable side-by-side in Tiptap
+                        const html = `<img src="/api/uploads/keyimages/${img.file_path}" alt="Key Image" width="220" style="width: 220px; height: auto; display: inline-block; vertical-align: top; margin: 4px;" />`;
                         e.dataTransfer.setData("text/html", html);
                         e.dataTransfer.setData("text/plain", html);
                         e.dataTransfer.effectAllowed = "copy";
@@ -691,7 +710,7 @@ export default function ReportEditor({
                           <X size={10} />
                         </button>
                       </div>
-                      <div className="border-t border-slate-100 bg-white">
+                      <div className="border-t border-slate-100 bg-white shrink-0">
                         <Button size="sm" variant="ghost" className="w-full text-[10px] h-6 text-blue-600 hover:bg-blue-50 font-medium rounded-none" onClick={() => insertKeyImageToEditor(img)}>
                           Insert
                         </Button>

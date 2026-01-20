@@ -5,8 +5,8 @@ let socket: Socket | null = null;
 
 export function initSocket(token?: string) {
   if (socket) return socket;
-  socket = io(process.env.REACT_APP_API_BASE || '/', {
-    path: process.env.REACT_APP_SOCKET_PATH || '/socket.io',
+  socket = io(import.meta.env.VITE_API_BASE || '/', {
+    path: import.meta.env.VITE_SOCKET_PATH || '/socket.io',
     autoConnect: true,
     auth: token ? { token } : undefined,
   });

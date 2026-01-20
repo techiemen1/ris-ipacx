@@ -64,7 +64,7 @@ const getDicomTag = (obj: any, tag: string) => {
 // ------------- NORMALIZE STUDY -------------
 const normalizeStudy = (s: any): StudyRow => {
   const patientName =
-    s.patient_name || s.patientName || s.PatientName || getDicomTag(s, "00100010") || "";
+    (s.patient_name || s.patientName || s.PatientName || getDicomTag(s, "00100010") || "").replace(/\^/g, " ").trim();
 
   const patientID =
     s.patient_id || s.patientID || s.PatientID || getDicomTag(s, "00100020") || "";
@@ -104,6 +104,9 @@ const normalizeStudy = (s: any): StudyRow => {
     else if (typeof mis === "string") modality = mis;
   }
 
+  // Robust Body Part Extraction
+  const bodyPart = s.body_part || s.bodyPart || s.BodyPartExamined || getDicomTag(s, "00180015") || "";
+
   // If still empty, check if '00081030' (Description) contains a hint? No, that's unsafe.
   // Fallback to "—" is handled in render
 
@@ -116,6 +119,11 @@ const normalizeStudy = (s: any): StudyRow => {
     (s["00081030"] && s["00081030"].Value && s["00081030"].Value[0]) ||
     "";
 
+  // Additional demographics for Report Header
+  const sex = s.patientSex || s.PatientSex || s.sex || getDicomTag(s, "00100040") || "";
+  const age = s.patientAge || s.PatientAge || s.age || getDicomTag(s, "00101010") || "";
+  const refPhys = s.referringPhysician || s.ReferringPhysicianName || s.referring_physician || getDicomTag(s, "00080090") || "";
+
   return {
     id: studyUID || Math.random().toString(36).slice(2),
     studyInstanceUID: studyUID,
@@ -123,8 +131,13 @@ const normalizeStudy = (s: any): StudyRow => {
     patientID,
     modality: modality || "",
     date,
+    studyDate: date, // Added studyDate alias to match PatientMeta
     accessionNumber: accession,
     description,
+    bodyPart,
+    patientSex: sex,
+    patientAge: age,
+    referringPhysician: refPhys,
     ...s,
   };
 };
@@ -320,7 +333,7 @@ export default function PACSPage() {
   const openOHIF = (uid?: string) => {
     if (!uid) return;
     window.open(
-      `http://192.168.1.34:8042/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
+      `http://${window.location.hostname}:8042/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
         uid
       )}`,
       "_blank"
@@ -640,7 +653,7 @@ export default function PACSPage() {
             >
               <iframe
                 title="OHIF Viewer"
-                src={`http://192.168.1.34:8042/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
+                src={`http://${window.location.hostname}:8042/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
                   splitView.study.studyInstanceUID ??
                   splitView.study.id ??
                   ""
@@ -696,10 +709,11 @@ export default function PACSPage() {
                     splitView.study.studyInstanceUID ?? splitView.study.id
                   }
                   initialPatient={{
-                    patientName: splitView.study.patientName,
+                    patientName: (splitView.study.patientName || "").replace(/\^/g, " ").trim(),
                     patientID: splitView.study.patientID,
                     accessionNumber: splitView.study.accessionNumber,
                     modality: splitView.study.modality,
+                    studyDate: splitView.study.date, // Pass the date!
                   }}
                   onClose={closeSplitView}
                 />

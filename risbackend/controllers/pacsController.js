@@ -29,7 +29,41 @@ exports.getStudies = async (req, res) => {
     if (!pacs) return res.status(404).json({ success: false, message: 'PACS not found' });
 
     const list = await pacsService.qidoStudies(pacs, req.query);
-    return res.json({ success: true, data: Array.isArray(list) ? list : (list && list.data) || [] });
+    const data = Array.isArray(list) ? list : (list && list.data) || [];
+
+    // Clean names before sending to frontend
+    const cleaned = data.map(s => {
+      // Helper to clean a specific tag value
+      const clean = (val) => {
+        if (!val) return val;
+        if (typeof val === 'string') return val.replace(/\^/g, ' ').trim();
+        if (val.Alphabetic) return val.Alphabetic.replace(/\^/g, ' ').trim();
+        return val;
+      };
+
+      if (s.PatientName) {
+        if (s.PatientName.Alphabetic) s.PatientName.Alphabetic = clean(s.PatientName.Alphabetic);
+        else if (typeof s.PatientName === 'string') s.PatientName = clean(s.PatientName);
+        // Dictionary format support
+        else if (Array.isArray(s.PatientName.Value)) {
+          if (s.PatientName.Value[0].Alphabetic) s.PatientName.Value[0].Alphabetic = clean(s.PatientName.Value[0].Alphabetic);
+        }
+        // Tag "00100010"
+        if (s["00100010"] && s["00100010"].Value && s["00100010"].Value[0]) {
+          if (s["00100010"].Value[0].Alphabetic) s["00100010"].Value[0].Alphabetic = clean(s["00100010"].Value[0].Alphabetic);
+        }
+      }
+
+      // Also Referring Physician
+      if (s.ReferringPhysicianName) {
+        // simplified check
+        if (s.ReferringPhysicianName.Alphabetic) s.ReferringPhysicianName.Alphabetic = clean(s.ReferringPhysicianName.Alphabetic);
+      }
+
+      return s;
+    });
+
+    return res.json({ success: true, data: cleaned });
   } catch (err) {
     console.error('pacs.getStudies', err && (err.message || err));
     if (err.message === 'UNAUTHORIZED') {

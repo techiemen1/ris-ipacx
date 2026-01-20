@@ -31,7 +31,7 @@ const Login: React.FC = () => {
       navigate("/");
     } catch (err: any) {
       console.error("[LOGIN ERROR]", err.response?.data || err.message);
-      setError(err.response?.data?.error || "Login failed");
+      setError(err.response?.data?.error || err.message || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -63,15 +63,27 @@ const Login: React.FC = () => {
         />
         <button
           type="submit"
-          className={`w-full py-2 text-white rounded ${
-            loading ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"
-          }`}
+          className={`w-full py-2 text-white rounded ${loading ? "bg-gray-400" : "bg-blue-600 hover:bg-blue-700"
+            }`}
           disabled={loading}
         >
           {loading ? "Logging in..." : "Login"}
         </button>
       </form>
-    </div>
+
+      {/* Network Debug */}
+      <div className="fixed bottom-4 right-4 text-xs text-slate-400">
+        <button
+          onClick={() => {
+            alert(`Base URL: ${axiosInstance.defaults.baseURL}`);
+            axiosInstance.get('/').then(() => alert('Connection OK')).catch(e => alert(`Error: ${e.message}`));
+          }}
+          className="underline hover:text-slate-600"
+        >
+          Test Connection
+        </button>
+      </div>
+    </div >
   );
 };
 

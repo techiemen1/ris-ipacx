@@ -50,7 +50,7 @@ exports.getStudyMeta = async (req, res) => {
 
     // 2. Fetch PACS Data
     try {
-      const pacsRes = await pool.query(`SELECT * FROM pacs_servers ORDER BY id LIMIT 1`);
+      const pacsRes = await pool.query(`SELECT * FROM pacs_servers WHERE is_active = true ORDER BY id LIMIT 1`);
       const pacs = pacsRes.rows[0];
       if (pacs) {
         // Fetch from QIDO
@@ -59,45 +59,52 @@ exports.getStudyMeta = async (req, res) => {
           (s) => s.StudyInstanceUID === studyUID || s["0020000D"]?.Value?.[0] === studyUID
         );
 
-        if (match) {
-          // Helper to extract QIDO value safely
-          const val = (tag, key) => {
-            if (match[key] !== undefined) return match[key];
-            if (match[tag]?.Value?.[0]?.Alphabetic) return match[tag].Value[0].Alphabetic;
-            if (match[tag]?.Value?.[0]) return match[tag].Value[0];
-            return undefined;
-          };
+        const val = (tag, key) => {
+          if (!match) return undefined;
+          if (match[key] !== undefined) return match[key];
+          if (match[tag]?.Value?.[0]?.Alphabetic) return match[tag].Value[0].Alphabetic;
+          if (match[tag]?.Value?.[0]) return match[tag].Value[0];
+          return undefined;
+        };
 
-          const rawName = val("00100010", "PatientName");
-          let pName = cleanName(rawName);
-          let pSex = val("00100040", "PatientSex");
-          let pAge = val("00101010", "PatientAge");
+        let pName = cleanName(val("00100010", "PatientName"));
+        let pID = val("00100020", "PatientID");
+        let pSex = val("00100040", "PatientSex");
+        let pAge = val("00101010", "PatientAge");
+        let accession = val("00080050", "AccessionNumber");
+        let studyDate = val("00080020", "StudyDate");
+        let refPhys = cleanName(val("00080090", "ReferringPhysicianName"));
+        let modality = (match && Array.isArray(match.ModalitiesInStudy) && match.ModalitiesInStudy[0]) || val("00080060", "Modality");
+        let bodyPart = val("00180015", "BodyPartExamined");
 
-          // Special Handler: If Name contains embedded demographics (e.g. "NAME^V^43Y/F")
-          // This happens in some poor DICOM implementations.
-          if (rawName && (rawName.includes("^") || rawName.includes("/"))) {
-            const parts = rawName.split(/[\^/]/); // Split by caret or slash
-            // Check for Age pattern (digits + Y/M/D)
-            const agePart = parts.find(p => /^\d{2,3}[YMD]$/.test(p));
-            // Check for Sex pattern (M/F/O)
-            const sexPart = parts.find(p => /^[MFO]$/.test(p));
-
-            if (!pAge && agePart) pAge = agePart;
-            if (!pSex && sexPart) pSex = sexPart;
+        // Deep Scrape Fallback: If critical fields are missing
+        if (!modality || !bodyPart || !pSex || !pAge || !refPhys) {
+          console.log(`🔍 Deep Scraping DICOM for ${studyUID}...`);
+          const deepMatch = await pacsService.getDeepMetadata(pacs, studyUID);
+          if (deepMatch) {
+            if (!modality && deepMatch.modality) modality = deepMatch.modality;
+            if (!bodyPart && deepMatch.bodyPartExamined) bodyPart = deepMatch.bodyPartExamined;
+            if (!pName && deepMatch.patientName) pName = cleanName(deepMatch.patientName);
+            if (!pID && deepMatch.patientID) pID = deepMatch.patientID;
+            if (!pSex && deepMatch.patientSex) pSex = deepMatch.patientSex;
+            if (!pAge && deepMatch.patientAge) pAge = deepMatch.patientAge;
+            if (!refPhys && deepMatch.referringPhysician) refPhys = cleanName(deepMatch.referringPhysician);
+            if (!accession && deepMatch.accessionNumber) accession = deepMatch.accessionNumber;
+            if (!studyDate && deepMatch.studyDate) studyDate = deepMatch.studyDate;
           }
-
-          pacsMeta = {
-            patientName: pName,
-            patientID: val("00100020", "PatientID"),
-            modality: (Array.isArray(match.ModalitiesInStudy) && match.ModalitiesInStudy[0]) || val("00080060", "Modality"),
-            accessionNumber: val("00080050", "AccessionNumber"),
-            studyDate: val("00080020", "StudyDate"),
-            patientSex: pSex,
-            patientAge: pAge,
-            referringPhysician: cleanName(val("00080090", "ReferringPhysicianName")),
-            bodyPart: val("00180015", "BodyPartExamined"),
-          };
         }
+
+        pacsMeta = {
+          patientName: pName,
+          patientID: pID,
+          modality: modality,
+          accessionNumber: accession,
+          studyDate: studyDate,
+          patientSex: pSex,
+          patientAge: pAge,
+          referringPhysician: refPhys,
+          bodyPart: bodyPart,
+        };
       }
     } catch (e) {
       console.warn("PACS fetch failed", e.message);
@@ -105,20 +112,66 @@ exports.getStudyMeta = async (req, res) => {
 
     // 3. Merge: Local > PACS
     const final = {};
-    // ... merge logic below ...
     const keys = ["patientName", "patientID", "modality", "accessionNumber", "studyDate", "patientSex", "patientAge", "referringPhysician", "bodyPart", "created_at"];
 
     keys.forEach(k => {
-      if (localMeta[k] !== undefined && localMeta[k] !== null) {
+      if (localMeta[k] !== undefined && localMeta[k] !== null && localMeta[k] !== "") {
         final[k] = localMeta[k];
       } else {
         final[k] = pacsMeta[k] || "";
       }
     });
 
-    // Fallback: If studyDate is missing but we have a created_at from local meta, use that (or today?)
+    // 4. INSTANT CACHING: Save merged results to local DB if not already there or if new info found
+    if (Object.keys(pacsMeta).length > 0) {
+      try {
+        await pool.query(
+          `INSERT INTO study_metadata 
+           (study_instance_uid, patient_name, patient_id, modality, accession_number, study_date, patient_sex, patient_age, referring_physician, body_part)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           ON CONFLICT (study_instance_uid) 
+           DO UPDATE SET
+             patient_name = COALESCE(NULLIF(study_metadata.patient_name, ''), EXCLUDED.patient_name),
+             patient_id = COALESCE(NULLIF(study_metadata.patient_id, ''), EXCLUDED.patient_id),
+             modality = COALESCE(NULLIF(study_metadata.modality, ''), EXCLUDED.modality),
+             accession_number = COALESCE(NULLIF(study_metadata.accession_number, ''), EXCLUDED.accession_number),
+             study_date = COALESCE(study_metadata.study_date, EXCLUDED.study_date),
+             patient_sex = COALESCE(NULLIF(study_metadata.patient_sex, ''), EXCLUDED.patient_sex),
+             patient_age = COALESCE(NULLIF(study_metadata.patient_age, ''), EXCLUDED.patient_age),
+             referring_physician = COALESCE(NULLIF(study_metadata.referring_physician, ''), EXCLUDED.referring_physician),
+             body_part = COALESCE(NULLIF(study_metadata.body_part, ''), EXCLUDED.body_part)
+          `,
+          [
+            studyUID,
+            final.patientName,
+            final.patientID,
+            final.modality,
+            final.accessionNumber,
+            final.studyDate || null,
+            final.patientSex,
+            final.patientAge,
+            final.referringPhysician,
+            final.bodyPart
+          ]
+        );
+      } catch (cacheErr) {
+        console.warn("Instant caching failed", cacheErr.message);
+      }
+    }
+
+    // Fallback: If studyDate is missing but we have a created_at from local meta, use that
     if (!final.studyDate && localMeta.created_at) {
-      final.created_at = localMeta.created_at;
+      const d = new Date(localMeta.created_at);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        final.studyDate = `${y}${m}${day}`;
+      }
+    }
+
+    if (final.studyDate && typeof final.studyDate === 'string') {
+      final.studyDate = final.studyDate.replace(/-/g, '').slice(0, 8);
     }
 
     res.set("Cache-Control", "no-store");
@@ -180,6 +233,83 @@ exports.updateStudyMeta = async (req, res) => {
   } catch (err) {
     console.error("updateStudyMeta error:", err);
     res.status(500).json({ success: false, message: "Failed to update metadata" });
+  }
+};
+
+/**
+ * GET /api/studies
+ * Fetch recent studies from the default PACS server
+ */
+exports.getAllStudies = async (req, res) => {
+  try {
+    // 1. Get the first active PACS server
+    const pacsRes = await pool.query(`SELECT * FROM pacs_servers WHERE is_active = true ORDER BY id LIMIT 1`);
+    const pacs = pacsRes.rows[0];
+
+    if (!pacs) {
+      return res.status(404).json({ success: false, message: "No active PACS server configured" });
+    }
+
+    // 2. Fetch studies (default to last 30 days if no date range provided)
+    const { startDate, endDate } = req.query;
+
+    // Simple date calculation if not provided (YYYYMMDD)
+    let studyDateQuery = "";
+    if (startDate && endDate) {
+      const s = startDate.replace(/-/g, '');
+      const e = endDate.replace(/-/g, '');
+      studyDateQuery = `${s}-${e}`;
+    } else {
+      const now = new Date();
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(now.getDate() - 30);
+
+      const format = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+      studyDateQuery = `${format(thirtyDaysAgo)}-${format(now)}`;
+    }
+
+    const studies = await pacsService.qidoStudies(pacs, { StudyDate: studyDateQuery });
+
+    // 3. FETCH LOCAL CACHE: Get all metadata we've already scraped for these studies
+    const uids = (studies || []).map(s => s.StudyInstanceUID || s["0020000D"]?.Value?.[0]).filter(Boolean);
+    let localCacheMap = {};
+    if (uids.length > 0) {
+      const cacheRes = await pool.query(
+        `SELECT study_instance_uid, modality, body_part, patient_name, patient_id, 
+                accession_number, study_date, patient_sex, patient_age, referring_physician
+         FROM study_metadata 
+         WHERE study_instance_uid = ANY($1)`,
+        [uids]
+      );
+      cacheRes.rows.forEach(r => {
+        localCacheMap[r.study_instance_uid] = r;
+      });
+    }
+
+    // 4. Clean and Merge
+    const cleanedStudies = (studies || []).map(s => {
+      const uid = s.StudyInstanceUID || s["0020000D"]?.Value?.[0];
+      const cached = localCacheMap[uid] || {};
+
+      return {
+        ...s,
+        // Override with cached values if PACS is missing them
+        PatientName: cached.patient_name || cleanName(s.PatientName || (s["00100010"]?.Value?.[0]?.Alphabetic) || (s["00100010"]?.Value?.[0])),
+        PatientID: cached.patient_id || s.PatientID || s["00100020"]?.Value?.[0],
+        Modality: cached.modality || s.Modality || (Array.isArray(s.ModalitiesInStudy) && s.ModalitiesInStudy[0]) || s["00080060"]?.Value?.[0],
+        BodyPartExamined: cached.body_part || s.BodyPartExamined || s["00180015"]?.Value?.[0],
+        AccessionNumber: cached.accession_number || s.AccessionNumber || s["00080050"]?.Value?.[0],
+        StudyDate: cached.study_date || s.StudyDate || s["00080020"]?.Value?.[0],
+        PatientSex: cached.patient_sex || s.PatientSex || s["00100040"]?.Value?.[0],
+        PatientAge: cached.patient_age || s.PatientAge || s["00101010"]?.Value?.[0],
+        ReferringPhysicianName: cached.referring_physician || s.ReferringPhysicianName || s["00080090"]?.Value?.[0],
+      };
+    });
+
+    res.json({ success: true, data: cleanedStudies });
+  } catch (err) {
+    console.error("getAllStudies error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch studies from PACS" });
   }
 };
 

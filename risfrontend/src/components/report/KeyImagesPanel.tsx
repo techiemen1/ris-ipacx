@@ -37,9 +37,9 @@ export function KeyImagesPanel({
           />
         </label>
 
-        <div className="flex flex-col gap-3 overflow-y-auto flex-1">
+        <div className="grid grid-cols-2 gap-2 overflow-y-auto flex-1">
           {images.length === 0 ? (
-            <div className="text-center text-slate-400 text-xs italic py-4">
+            <div className="text-center text-slate-400 text-xs italic py-4 col-span-2">
               No images yet.
             </div>
           ) : (
