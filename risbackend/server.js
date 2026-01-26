@@ -141,6 +141,7 @@ app.use("/api/debug", debugRoutes);
 app.use("/api/stt", sttRoutes);
 app.use("/api/consents", consentRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/dictation", require("./routes/dictationRoutes"));
 app.use("/api/modalities", require("./routes/modalityRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
 

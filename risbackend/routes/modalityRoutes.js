@@ -17,7 +17,7 @@ router.get('/', async (req, res) => {
 // CREATE
 router.post('/', async (req, res) => {
     try {
-        const { name, ae_title, ip_address, port, description } = req.body;
+        const { name, ae_title, ip_address, port, description, color } = req.body;
         console.log("[DEBUG] Creating Modality:", req.body);
 
         // validation
@@ -29,13 +29,14 @@ router.post('/', async (req, res) => {
         // Force variables to string/int to avoid undefined issues
         const pPort = parseInt(port) || 104;
         const pDesc = description || '';
+        const pColor = color || '#3b82f6';
 
         const q = `
-            INSERT INTO modalities (name, ae_title, ip_address, port, description) 
-            VALUES ($1, $2, $3, $4, $5) 
+            INSERT INTO modalities (name, ae_title, ip_address, port, description, color) 
+            VALUES ($1, $2, $3, $4, $5, $6) 
             RETURNING *
         `;
-        const params = [name, ae_title, ip_address, pPort, pDesc];
+        const params = [name, ae_title, ip_address, pPort, pDesc, pColor];
         console.log("[DEBUG] Executing Query:", q);
         console.log("[DEBUG] With Params:", params);
 
@@ -57,15 +58,29 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, ae_title, ip_address, port, description } = req.body;
+        const { name, ae_title, ip_address, port, description, color } = req.body;
+
+        // Fetch current values first to ensure partial updates don't clear data
+        const current = await pool.query("SELECT * FROM modalities WHERE id = $1", [id]);
+        if (current.rowCount === 0) return res.status(404).json({ success: false, message: "Not found" });
+        const c = current.rows[0];
 
         const q = `
       UPDATE modalities 
-      SET name=$1, ae_title=$2, ip_address=$3, port=$4, description=$5, updated_at=NOW()
-      WHERE id=$6
+      SET name=$1, ae_title=$2, ip_address=$3, port=$4, description=$5, color=$6, updated_at=NOW()
+      WHERE id=$7
       RETURNING *
     `;
-        const r = await pool.query(q, [name, ae_title, ip_address, port, description, id]);
+        const params = [
+            name || c.name,
+            ae_title || c.ae_title,
+            ip_address || c.ip_address,
+            port !== undefined ? port : c.port,
+            description !== undefined ? description : c.description,
+            color || c.color,
+            id
+        ];
+        const r = await pool.query(q, params);
         if (r.rowCount === 0) return res.status(404).json({ success: false, message: "Not found" });
 
         res.json({ success: true, data: r.rows[0] });

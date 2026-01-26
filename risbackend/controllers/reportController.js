@@ -22,7 +22,8 @@ exports.getReport = async (req, res) => {
         modality,
         accession_number,
         study_date,
-        report_title
+        report_title,
+        workflow_note
       FROM pacs_reports
       WHERE study_instance_uid = $1
       ORDER BY updated_at DESC
@@ -50,6 +51,7 @@ exports.getReport = async (req, res) => {
         accessionNumber: row.accession_number,
         studyDate: row.study_date,
         reportTitle: row.report_title,
+        workflowNote: row.workflow_note,
         updatedAt: row.updated_at,
       },
     });
@@ -154,6 +156,7 @@ exports.saveReportUpsert = async (req, res) => {
     accessionNumber,
     studyDate,
     reportTitle,
+    workflow_note,
   } = req.body;
 
   try {
@@ -169,9 +172,10 @@ exports.saveReportUpsert = async (req, res) => {
         accession_number,
         study_date,
         report_title,
+        workflow_note,
         created_by
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
       ON CONFLICT (study_instance_uid)
       DO UPDATE SET
         content            = EXCLUDED.content,
@@ -182,6 +186,7 @@ exports.saveReportUpsert = async (req, res) => {
         accession_number   = EXCLUDED.accession_number,
         study_date         = EXCLUDED.study_date,
         report_title       = EXCLUDED.report_title,
+        workflow_note      = EXCLUDED.workflow_note,
         updated_at         = NOW()
       `,
       [
@@ -194,6 +199,7 @@ exports.saveReportUpsert = async (req, res) => {
         accessionNumber,
         studyDate,
         reportTitle,
+        workflow_note,
         req.user.id,
       ]
     );

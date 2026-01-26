@@ -394,4 +394,78 @@ exports.getAllStudies = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/studies/patient/:patientID/priors
+ * Fetch all previous studies for a specific patient
+ */
+exports.getPatientPriors = async (req, res) => {
+  const { patientID } = req.params;
+  const { currentStudyUID } = req.query;
+
+  try {
+    // 1. Get first active PACS server
+    const pacsRes = await pool.query(`SELECT * FROM pacs_servers WHERE is_active = true ORDER BY id LIMIT 1`);
+    const pacs = pacsRes.rows[0];
+
+    if (!pacs) {
+      return res.status(404).json({ success: false, message: "No active PACS server" });
+    }
+
+    // 2. Fetch all studies for this patient from PACS
+    // We don't use a date limit here to get the full history
+    const studies = await pacsService.qidoStudies(pacs, {
+      PatientID: patientID,
+      StudyDate: "" // Explicitly empty to override any default date filtering
+    });
+
+    if (!studies || !Array.isArray(studies)) {
+      return res.json({ success: true, data: [] });
+    }
+
+    // 3. Filter out the current study and sanitize
+    const uids = [];
+    const sanitized = studies
+      .map(s => {
+        const uid = s.StudyInstanceUID || s["0020000D"]?.Value?.[0];
+        if (!uid || uid === currentStudyUID) return null;
+        uids.push(uid);
+        return {
+          studyUID: uid,
+          accession: s.AccessionNumber || s["00080050"]?.Value?.[0] || "—",
+          modality: s.Modality || (Array.isArray(s.ModalitiesInStudy) ? s.ModalitiesInStudy[0] : s["00080060"]?.Value?.[0]) || "—",
+          description: s.StudyDescription || s["00081030"]?.Value?.[0] || "No Description",
+          date: s.StudyDate || s["00080020"]?.Value?.[0] || ""
+        };
+      })
+      .filter(Boolean);
+
+    // 4. Cross-reference with Reports database
+    let reportMap = {};
+    if (uids.length > 0) {
+      const reports = await pool.query(
+        `SELECT study_instance_uid, status FROM pacs_reports WHERE study_instance_uid = ANY($1)`,
+        [uids]
+      );
+      reports.rows.forEach(r => {
+        reportMap[r.study_instance_uid] = r.status;
+      });
+    }
+
+    // 5. Final Merge
+    const finalData = sanitized.map(s => ({
+      ...s,
+      reportStatus: reportMap[s.studyUID] || null
+    }));
+
+    // Sort by date (newest first)
+    finalData.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+
+    res.json({ success: true, data: finalData });
+
+  } catch (err) {
+    console.error("getPatientPriors error:", err);
+    res.status(500).json({ success: false, message: "Failed to fetch priors" });
+  }
+};
+
 

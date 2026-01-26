@@ -10,6 +10,7 @@ import ReportTemplatesManager from "./ReportTemplatesManager";
 import BillingSettingsManager from "./BillingSettingsManager";
 import ReferenceDataManager from "./ReferenceDataManager";
 import ModalitySettings from "./ModalitySettings";
+import VocabularySettings from "./VocabularySettings";
 import dayjs from "dayjs";
 import { toast } from "react-hot-toast"; // optional: if you have it. If not, remove toast.* lines
 
@@ -22,6 +23,7 @@ const TABS = [
   { id: "clinical", label: "Clinical Workflow" },
   { id: "billing", label: "Billing & GST" },
   { id: "templates", label: "Report Templates" },
+  { id: "lexicon", label: "Medical Lexicon" },
   { id: "ai", label: "AI & Reporting" },
   { id: "devops", label: "DevOps & Diagnostics" },
   { id: "danger", label: "Danger Zone" },
@@ -444,6 +446,7 @@ export default function SettingsPage() {
         )}
 
         {active === "templates" && <ReportTemplatesManager />}
+        {active === "lexicon" && <VocabularySettings />}
         {active === "ai" && (
           <Card>
             <CardHeader><CardTitle>AI & Reporting</CardTitle></CardHeader>

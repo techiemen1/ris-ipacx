@@ -11,7 +11,7 @@ import {
     TableHeader,
     TableRow,
 } from "../../components/ui/table";
-import { Trash2, Plus, CheckCircle2, AlertCircle } from "lucide-react";
+import { Trash2, Plus, CheckCircle2, AlertCircle, Pencil, X } from "lucide-react";
 
 type Modality = {
     id: number;
@@ -20,6 +20,7 @@ type Modality = {
     ip_address: string;
     port: number;
     description: string;
+    color: string;
 };
 
 export default function ModalitySettings() {
@@ -33,6 +34,11 @@ export default function ModalitySettings() {
     const [newAET, setNewAET] = useState("");
     const [newIP, setNewIP] = useState("");
     const [newPort, setNewPort] = useState(104);
+    const [newColor, setNewColor] = useState("#3b82f6");
+
+    // Edit State
+    const [editingId, setEditingId] = useState<number | null>(null);
+    const [editValues, setEditValues] = useState<Partial<Modality>>({});
 
     const load = async () => {
         setLoading(true);
@@ -62,6 +68,7 @@ export default function ModalitySettings() {
                 ae_title: newAET,
                 ip_address: newIP,
                 port: newPort,
+                color: newColor,
                 description: "Added via Settings"
             });
             // Reset
@@ -71,6 +78,19 @@ export default function ModalitySettings() {
             setNewPort(104);
             setError(null);
             setSuccessMsg("Modality added successfully");
+            setTimeout(() => setSuccessMsg(null), 3000);
+            load();
+        } catch (err: any) {
+            setError(err.response?.data?.message || err.message);
+        }
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editingId) return;
+        try {
+            await axiosInstance.put(`/modalities/${editingId}`, editValues);
+            setEditingId(null);
+            setSuccessMsg("Modality updated successfully");
             setTimeout(() => setSuccessMsg(null), 3000);
             load();
         } catch (err: any) {
@@ -122,12 +142,15 @@ export default function ModalitySettings() {
                                 <Input placeholder="e.g. 192.168.1.50" value={newIP} onChange={e => setNewIP(e.target.value)} />
                             </div>
                             <div className="space-y-1.5">
-                                <label className="text-xs font-medium text-slate-500">Port (Default 104)</label>
+                                <label className="text-xs font-medium text-slate-500">Color Tag</label>
                                 <div className="flex gap-2">
-                                    <Input type="number" value={newPort} onChange={e => setNewPort(parseInt(e.target.value))} className="flex-1" />
-                                    <Button onClick={handleAdd} disabled={loading} className="shrink-0">
-                                        <Plus size={16} className="mr-2" /> Add
-                                    </Button>
+                                    <Input type="color" value={newColor} onChange={e => setNewColor(e.target.value)} className="w-12 h-10 p-1" />
+                                    <div className="flex gap-2 flex-1">
+                                        <Input type="number" value={newPort} onChange={e => setNewPort(parseInt(e.target.value))} className="flex-1" />
+                                        <Button onClick={handleAdd} disabled={loading} className="shrink-0">
+                                            <Plus size={16} className="mr-2" /> Add
+                                        </Button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -144,10 +167,10 @@ export default function ModalitySettings() {
                             <TableHeader>
                                 <TableRow>
                                     <TableHead>No.</TableHead>
+                                    <TableHead>Color</TableHead>
                                     <TableHead>Name</TableHead>
                                     <TableHead>AE Title</TableHead>
                                     <TableHead>IP / Port</TableHead>
-                                    <TableHead>Status</TableHead>
                                     <TableHead className="text-right">Action</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -162,20 +185,58 @@ export default function ModalitySettings() {
                                     modalities.map((m, i) => (
                                         <TableRow key={m.id}>
                                             <TableCell className="text-xs text-slate-400">{i + 1}</TableCell>
-                                            <TableCell className="font-medium text-sm">{m.name}</TableCell>
-                                            <TableCell className="font-mono text-xs text-blue-700 bg-blue-50 px-2 py-1 rounded w-fit">{m.ae_title}</TableCell>
+                                            <TableCell>
+                                                {editingId === m.id ? (
+                                                    <Input type="color" value={editValues.color} onChange={e => setEditValues({ ...editValues, color: e.target.value })} className="w-10 h-8 p-1" />
+                                                ) : (
+                                                    <div className="w-4 h-4 rounded-full shadow-sm" style={{ backgroundColor: m.color || '#cbd5e1' }} />
+                                                )}
+                                            </TableCell>
+                                            <TableCell className="font-medium text-sm">
+                                                {editingId === m.id ? (
+                                                    <Input value={editValues.name} onChange={e => setEditValues({ ...editValues, name: e.target.value })} className="h-8 text-xs" />
+                                                ) : m.name}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-xs">
+                                                {editingId === m.id ? (
+                                                    <Input value={editValues.ae_title} onChange={e => setEditValues({ ...editValues, ae_title: e.target.value.toUpperCase() })} className="h-8 text-xs w-32" />
+                                                ) : (
+                                                    <span className="text-blue-700 bg-blue-50 px-2 py-1 rounded">{m.ae_title}</span>
+                                                )}
+                                            </TableCell>
                                             <TableCell className="text-xs text-slate-500 font-mono">
-                                                {m.ip_address}:{m.port}
+                                                {editingId === m.id ? (
+                                                    <div className="flex items-center gap-1">
+                                                        <Input value={editValues.ip_address} onChange={e => setEditValues({ ...editValues, ip_address: e.target.value })} className="h-8 text-xs w-32" />
+                                                        <span>:</span>
+                                                        <Input type="number" value={editValues.port} onChange={e => setEditValues({ ...editValues, port: parseInt(e.target.value) })} className="h-8 text-xs w-16" />
+                                                    </div>
+                                                ) : (
+                                                    `${m.ip_address}:${m.port}`
+                                                )}
                                             </TableCell>
                                             <TableCell>
-                                                <span className="flex items-center gap-1.5 text-xs text-emerald-600 font-medium">
-                                                    <CheckCircle2 size={12} /> Active
-                                                </span>
-                                            </TableCell>
-                                            <TableCell className="text-right">
-                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-500 hover:bg-red-50" onClick={() => handleDelete(m.id)}>
-                                                    <Trash2 size={14} />
-                                                </Button>
+                                                <div className="flex justify-end gap-1">
+                                                    {editingId === m.id ? (
+                                                        <>
+                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-emerald-600 hover:bg-emerald-50" onClick={handleSaveEdit}>
+                                                                <CheckCircle2 size={14} />
+                                                            </Button>
+                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:bg-slate-50" onClick={() => setEditingId(null)}>
+                                                                <X size={14} />
+                                                            </Button>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600 hover:bg-blue-50" onClick={() => { setEditingId(m.id); setEditValues(m); }}>
+                                                                <Pencil size={14} />
+                                                            </Button>
+                                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-red-500 hover:bg-red-50" onClick={() => handleDelete(m.id)}>
+                                                                <Trash2 size={14} />
+                                                            </Button>
+                                                        </>
+                                                    )}
+                                                </div>
                                             </TableCell>
                                         </TableRow>
                                     ))

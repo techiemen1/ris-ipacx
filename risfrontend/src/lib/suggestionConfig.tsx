@@ -12,6 +12,7 @@ const COMMANDS = [
         title: 'Heading 1',
         subtitle: 'Big section header',
         icon: <Heading1 className="w-3 h-3 text-slate-600" />,
+        modality: null,
         command: ({ editor, range }: any) => {
             editor.chain().focus().deleteRange(range).setNode('heading', { level: 1 }).run()
         },
@@ -20,6 +21,7 @@ const COMMANDS = [
         title: 'Heading 2',
         subtitle: 'Medium section header',
         icon: <Heading2 className="w-3 h-3 text-slate-600" />,
+        modality: null,
         command: ({ editor, range }: any) => {
             editor.chain().focus().deleteRange(range).setNode('heading', { level: 2 }).run()
         },
@@ -28,6 +30,7 @@ const COMMANDS = [
         title: 'Normal Chest X-Ray',
         subtitle: 'Standard normal template',
         icon: <FileText className="w-3 h-3 text-blue-600" />,
+        modality: 'XR',
         command: ({ editor, range }: any) => {
             editor
                 .chain()
@@ -41,6 +44,7 @@ const COMMANDS = [
         title: 'Normal Brain CT',
         subtitle: 'Standard normal template',
         icon: <FileText className="w-3 h-3 text-violet-600" />,
+        modality: 'CT',
         command: ({ editor, range }: any) => {
             editor
                 .chain()
@@ -54,6 +58,7 @@ const COMMANDS = [
         title: 'Bullet List',
         subtitle: 'Create a simple list',
         icon: <Type className="w-3 h-3 text-slate-600" />,
+        modality: null,
         command: ({ editor, range }: any) => {
             editor.chain().focus().deleteRange(range).toggleBulletList().run()
         },
@@ -62,6 +67,7 @@ const COMMANDS = [
         title: 'Task List',
         subtitle: 'Track actionable items',
         icon: <CheckSquare className="w-3 h-3 text-emerald-600" />,
+        modality: null,
         command: ({ editor, range }: any) => {
             editor.chain().focus().deleteRange(range).toggleTaskList().run()
         },
@@ -69,8 +75,16 @@ const COMMANDS = [
 ]
 
 const suggestionConfig = {
-    items: ({ query }: { query: string }) => {
-        return COMMANDS.filter(item => item.title.toLowerCase().startsWith(query.toLowerCase())).slice(0, 10)
+    items: ({ query, editor }: { query: string, editor: any }) => {
+        const currentModality = (editor.options.editorProps.attributes?.['data-modality'] || "").toUpperCase();
+
+        return COMMANDS
+            .filter(item => {
+                const matchesQuery = item.title.toLowerCase().startsWith(query.toLowerCase());
+                const matchesModality = !item.modality || currentModality.includes(item.modality);
+                return matchesQuery && matchesModality;
+            })
+            .slice(0, 10);
     },
 
     render: () => {
