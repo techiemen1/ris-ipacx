@@ -1,5 +1,6 @@
 // src/pages/PACSPage.tsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import ReactDOM from "react-dom";
 import axiosInstance from "../services/axiosInstance";
 
 // import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -18,6 +19,8 @@ import {
   X,
   Search,
   ExternalLink,
+  GripVertical,
+  GripHorizontal
 } from "lucide-react";
 
 import dayjs from "dayjs";
@@ -27,6 +30,7 @@ import { getModalityColors } from "../utils/modalityColors";
 import ReportEditor from "./ReportEditor";
 import AppointmentScheduler from "./Schedule/AppointmentScheduler";
 import DateFilter from "../components/DateRangePicker";
+import { ResizableLayout } from "../components/layout/ResizableLayout";
 
 // ---------------- TYPES ----------------
 type PACSServer = {
@@ -171,8 +175,7 @@ export default function PACSPage() {
   const pageSize = 20;
 
   // split viewer/report
-  const [splitMode, setSplitMode] =
-    useState<"equal" | "viewer-small" | "report-small">("equal");
+  const [splitMode, setSplitMode] = useState<"horizontal" | "vertical">("horizontal");
   const [splitView, setSplitView] = useState<{
     active: boolean;
     study?: StudyRow | null;
@@ -345,16 +348,8 @@ export default function PACSPage() {
 
   const closeSplitView = () => {
     setSplitView({ active: false, study: null });
-    setSplitMode("equal");
+    setSplitMode("horizontal");
   };
-
-  const setViewerSmall = () => setSplitMode("viewer-small");
-  const setReportSmall = () => setSplitMode("report-small");
-  const resetSplit = () => setSplitMode("equal");
-
-  const viewerPct =
-    splitMode === "equal" ? 50 : splitMode === "viewer-small" ? 10 : 90;
-  const reportPct = 100 - viewerPct;
 
   const getReportStatusFor = (s: StudyRow) => {
     const uid = s.studyInstanceUID ?? s.id;
@@ -626,101 +621,74 @@ export default function PACSPage() {
         </div>
       )}
 
-      {/* SPLIT VIEW (OHIF + REPORT) */}
-      {splitView.active && splitView.study && (
-        <div className="fixed inset-0 z-50 bg-white">
-          {/* header */}
-          <div className="flex items-center justify-between p-3 border-b bg-gray-100">
-            <div className="text-lg font-semibold">
-              Report + Viewer —{" "}
-              {splitView.study.patientName ??
-                splitView.study.studyInstanceUID}
-            </div>
-            <Button variant="ghost" onClick={closeSplitView}>
-              <X className="w-5 h-5" />
-            </Button>
-          </div>
+      {/* SPLIT VIEW (OHIF + REPORT) - PORTAL TO BODY for TRUE FULL SCREEN */}
+      {splitView.active && splitView.study && ReactDOM.createPortal(
+        <div className="fixed-portal-root fixed inset-0 z-[9999] bg-slate-900 flex flex-col animate-in fade-in duration-200 font-sans">
 
-          {/* body */}
-          <div className="relative flex h-[calc(100vh-64px)]">
-            {/* viewer */}
-            <div
-              style={{
-                width: `${viewerPct}%`,
-                transition: "width 420ms cubic-bezier(0.22,1,0.36,1)",
-              }}
-              className="h-full border-r"
-            >
-              <iframe
-                title="OHIF Viewer"
-                src={`http://${window.location.hostname}:8042/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
-                  splitView.study.studyInstanceUID ??
-                  splitView.study.id ??
-                  ""
-                )}`}
-                className="w-full h-full border-0"
-                sandbox="allow-scripts allow-same-origin allow-forms"
-              />
-            </div>
+          {/* HEADER: Minimalist & Clean (No Overlap) */}
+          <div className="grid grid-cols-[1fr_auto] items-center px-4 h-14 border-b border-slate-700 bg-slate-900 shrink-0 shadow-md select-none gap-4">
 
-            {/* resize controls */}
-            <div
-              style={{ left: `calc(${viewerPct}% - 18px)` }}
-              className="absolute top-0 bottom-0 w-9 flex items-center justify-center z-50"
-            >
-              <div className="bg-white/90 rounded-full p-1 shadow border">
-                <div className="flex flex-col items-center">
-                  <button
-                    onClick={setViewerSmall}
-                    title="Minimize viewer"
-                    className="p-1"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={resetSplit}
-                    title="Reset split"
-                    className="p-1"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={setReportSmall}
-                    title="Minimize report"
-                    className="p-1"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+            {/* Left: Patient Name & Context */}
+            <div className="flex items-center gap-6 text-white overflow-hidden mr-4">
+              <div className="flex flex-col">
+                <span className="text-base font-bold tracking-wide uppercase truncate leading-tight" title={splitView.study.patientName}>
+                  {splitView.study.patientName || "Unknown Patient"}
+                </span>
+                <div className="flex items-center gap-2 text-xs text-slate-400 font-mono mt-0.5">
+                  <span>{splitView.study.patientID}</span>
+                  <span className="text-slate-600">•</span>
+                  <span className="text-emerald-400 font-bold">{splitView.study.modality}</span>
+                  <span className="text-slate-600">•</span>
+                  <span>{splitView.study.date}</span>
                 </div>
               </div>
             </div>
 
-            {/* report */}
-            <div
-              style={{
-                width: `${reportPct}%`,
-                transition: "width 420ms cubic-bezier(0.22,1,0.36,1)",
-              }}
-              className="h-full"
-            >
-              <div className="w-full h-full overflow-hidden bg-gray-50">
-                <ReportEditor
-                  studyUID={
-                    splitView.study.studyInstanceUID ?? splitView.study.id
-                  }
-                  initialPatient={{
-                    patientName: (splitView.study.patientName || "").replace(/\^/g, " ").trim(),
-                    patientID: splitView.study.patientID,
-                    accessionNumber: splitView.study.accessionNumber,
-                    modality: splitView.study.modality,
-                    studyDate: splitView.study.date, // Pass the date!
-                  }}
-                  onClose={closeSplitView}
-                />
-              </div>
+            {/* Right: Actions */}
+            <div className="flex items-center shrink-0">
+              <button
+                onClick={closeSplitView}
+                className="w-8 h-8 flex items-center justify-center rounded-full bg-red-600 hover:bg-red-500 text-white transition-all shadow-sm transform hover:scale-105"
+                title="Close Viewer"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
           </div>
-        </div>
+
+          {/* LAYOUT: Robust 50/50 Split */}
+          <div className="flex-1 flex min-h-0 overflow-hidden relative">
+
+            {/* LEFT: Viewer */}
+            <div className="w-1/2 h-full bg-black relative border-r border-slate-800">
+              <iframe
+                title="OHIF Viewer"
+                src={`http://${window.location.hostname}:8042/ohif/viewer?StudyInstanceUIDs=${encodeURIComponent(
+                  splitView.study.studyInstanceUID ?? splitView.study.id ?? ""
+                )}`}
+                className="w-full h-full border-0 block"
+                sandbox="allow-scripts allow-same-origin allow-forms"
+              />
+            </div>
+
+            {/* RIGHT: Report */}
+            <div className="w-1/2 h-full bg-slate-100 relative">
+              <ReportEditor
+                key={splitView.study.studyInstanceUID ?? splitView.study.id}
+                studyUID={splitView.study.studyInstanceUID ?? splitView.study.id}
+                initialPatient={{
+                  patientName: (splitView.study.patientName || "").replace(/\^/g, " ").trim(),
+                  patientID: splitView.study.patientID,
+                  accessionNumber: splitView.study.accessionNumber,
+                  modality: splitView.study.modality,
+                  studyDate: splitView.study.date,
+                }}
+                onClose={closeSplitView}
+              />
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -91,11 +91,22 @@ router.post(
   keyImageCtrl.uploadFile
 );
 
-// Delete
+// Delete Key Image
 router.delete(
   "/keyimage/:id",
   auth,
   keyImageCtrl.remove
+);
+
+const { verifyToken, authorize } = require("../middleware/authMiddleware");
+
+// Delete Report (Admin Only - Medical Legal Requirement)
+router.delete(
+  "/study/:studyUID",
+  verifyToken,
+  authorize(["admin"]),
+  audit("DELETE", "REPORT"),
+  reportController.deleteReport
 );
 
 module.exports = router;

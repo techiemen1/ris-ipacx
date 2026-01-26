@@ -22,6 +22,7 @@ type Template = {
   name: string;
   modality?: string | null;
   body_part?: string | null;
+  gender?: string | null; // M, F, null (Any)
   content: string;
 };
 
@@ -107,6 +108,8 @@ export default function ReportTemplatesManager() {
         editing.body_part && editing.body_part.trim() !== ""
           ? editing.body_part.trim()
           : null,
+
+      gender: (!editing.gender || editing.gender === "Any") ? null : editing.gender,
     };
 
     try {
@@ -144,7 +147,7 @@ export default function ReportTemplatesManager() {
         <CardTitle>Report Templates</CardTitle>
         <Button
           onClick={() =>
-            setEditing({ name: "", modality: "Any", body_part: "", content: "" })
+            setEditing({ name: "", modality: "Any", body_part: "", gender: "Any", content: "" })
           }
         >
           New Template
@@ -243,13 +246,27 @@ export default function ReportTemplatesManager() {
                 />
               )}
 
-              <Input
-                placeholder="Body Part (e.g. CHEST, BRAIN)"
-                value={editing.body_part || ""}
-                onChange={(e) =>
-                  setEditing({ ...editing, body_part: e.target.value })
-                }
-              />
+              <div className="flex gap-2">
+                <Input
+                  className="flex-1"
+                  placeholder="Body Part (e.g. CHEST, BRAIN)"
+                  value={editing.body_part || ""}
+                  onChange={(e) =>
+                    setEditing({ ...editing, body_part: e.target.value })
+                  }
+                />
+
+                <select
+                  className="w-1/3 border rounded px-2 font-semibold"
+                  value={editing.gender || "Any"}
+                  onChange={(e) => setEditing({ ...editing, gender: e.target.value })}
+                >
+                  <option value="Any">Gender: Any</option>
+                  <option value="M">Male</option>
+                  <option value="F">Female</option>
+                  <option value="O">Other</option>
+                </select>
+              </div>
 
               <EditorContent
                 editor={editor}

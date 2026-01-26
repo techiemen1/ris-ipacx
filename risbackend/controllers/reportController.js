@@ -21,7 +21,8 @@ exports.getReport = async (req, res) => {
         patient_id,
         modality,
         accession_number,
-        study_date
+        study_date,
+        report_title
       FROM pacs_reports
       WHERE study_instance_uid = $1
       ORDER BY updated_at DESC
@@ -48,6 +49,7 @@ exports.getReport = async (req, res) => {
         modality: row.modality,
         accessionNumber: row.accession_number,
         studyDate: row.study_date,
+        reportTitle: row.report_title,
         updatedAt: row.updated_at,
       },
     });
@@ -151,6 +153,7 @@ exports.saveReportUpsert = async (req, res) => {
     modality,
     accessionNumber,
     studyDate,
+    reportTitle,
   } = req.body;
 
   try {
@@ -165,9 +168,10 @@ exports.saveReportUpsert = async (req, res) => {
         modality,
         accession_number,
         study_date,
+        report_title,
         created_by
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       ON CONFLICT (study_instance_uid)
       DO UPDATE SET
         content            = EXCLUDED.content,
@@ -177,6 +181,7 @@ exports.saveReportUpsert = async (req, res) => {
         modality           = EXCLUDED.modality,
         accession_number   = EXCLUDED.accession_number,
         study_date         = EXCLUDED.study_date,
+        report_title       = EXCLUDED.report_title,
         updated_at         = NOW()
       `,
       [
@@ -188,6 +193,7 @@ exports.saveReportUpsert = async (req, res) => {
         modality,
         accessionNumber,
         studyDate,
+        reportTitle,
         req.user.id,
       ]
     );
@@ -270,7 +276,36 @@ exports.addAddendum = async (req, res) => {
 };
 
 /* =========================================================
-   KEY IMAGES: Handled by keyImageController.js
+   DELETE REPORT
 ========================================================= */
+exports.deleteReport = async (req, res) => {
+  const { studyUID } = req.params;
+
+  try {
+    // Delete from both potential report tables and related data
+    await pool.query("BEGIN");
+
+    // 1. Delete from pacs_reports (Main table for PACS-based reporting)
+    await pool.query("DELETE FROM pacs_reports WHERE study_instance_uid = $1", [studyUID]);
+
+    // 2. Delete from legacy/RIS reports table (linked via worklist)
+    await pool.query(`
+      DELETE FROM reports 
+      WHERE worklist_id IN (SELECT id FROM worklist WHERE study_instance_uid = $1)
+    `, [studyUID]);
+
+    // 3. Related tables
+    await pool.query("DELETE FROM pacs_report_images WHERE study_instance_uid = $1", [studyUID]);
+    await pool.query("DELETE FROM report_addenda WHERE study_uid = $1", [studyUID]);
+
+    await pool.query("COMMIT");
+
+    res.json({ success: true, message: "Report deleted successfully" });
+  } catch (err) {
+    await pool.query("ROLLBACK");
+    console.error("deleteReport error:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
 
 

@@ -4,6 +4,7 @@ import { Card, CardContent } from "../../components/ui/card";
 import { Input } from "../../components/ui/input";
 import { Button } from "../../components/ui/button";
 import { useNavigate } from "react-router-dom";
+import { useRBAC } from "../../context/RoleContext";
 import dayjs from "dayjs";
 import {
   FileText,
@@ -14,7 +15,8 @@ import {
   ChevronLeft,
   ChevronRight,
   FileCheck,
-  FileClock
+  FileClock,
+  Trash2
 } from "lucide-react";
 
 // Types
@@ -42,6 +44,8 @@ export default function ReportList(): JSX.Element {
   const pageSize = 15;
 
   const navigate = useNavigate();
+  const { user } = useRBAC();
+  const isAdmin = user?.role === "admin";
 
   // Load Reports
   const load = useCallback(async () => {
@@ -95,11 +99,29 @@ export default function ReportList(): JSX.Element {
     if (row.studyUID) navigate(`/report/${row.studyUID}`);
   };
 
+  const handleDelete = async (row: ReportRow) => {
+    if (!row.studyUID) return;
+
+    const confirmMsg = `MEDICAL-LEGAL WARNING: You are about to DELETE the report for:\n\n` +
+      `• Patient: ${row.patientName}\n` +
+      `• ID: ${row.patientID}\n` +
+      `• Accession: ${row.accessionNumber}\n\n` +
+      `Are you ABSOLUTELY sure? This action is permanent and will be audited.`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await axiosInstance.delete(`/reports/study/${row.studyUID}`);
+      // toast.success("Report deleted");
+      setList(prev => prev.filter(r => r.studyUID !== row.studyUID));
+    } catch (err) {
+      console.error("delete error", err);
+    }
+  };
+
   const handleNewReport = () => {
     // Redirect to PACS for proper study selection
     navigate('/pacs');
-    // Ideally user would see a toast here, but we can't easily pass it across routes without context/state.
-    // For now, simple redirect is better than broken 'Add' page.
   };
 
   return (
@@ -198,14 +220,27 @@ export default function ReportList(): JSX.Element {
                     <StatusBadge status={r.status} />
                   </td>
                   <td className="px-6 py-3 text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 font-medium"
-                      onClick={() => openViewer(r)}
-                    >
-                      {(r.status === 'final') ? "View" : "Edit"}
-                    </Button>
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 font-medium"
+                        onClick={() => openViewer(r)}
+                      >
+                        {(r.status === 'final') ? "View" : "Edit"}
+                      </Button>
+                      {isAdmin && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-400 hover:text-red-600 hover:bg-red-50"
+                          onClick={() => handleDelete(r)}
+                          title="Delete Report (Admin Only)"
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

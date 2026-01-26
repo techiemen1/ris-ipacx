@@ -14,7 +14,7 @@ const PatientList: React.FC = () => {
       try {
         setLoading(true);
         const token = localStorage.getItem('token');
-        const res = await fetch('http://localhost:5000/api/patients?limit=20', {
+        const res = await fetch(`/api/patients?limit=20`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const json = await res.json();

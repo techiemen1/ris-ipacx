@@ -16,17 +16,21 @@ type Template = {
     name: string;
     content: string;
     modality?: string;
+    body_part?: string;
+    gender?: string;
 };
 
 interface SmartTemplateSelectorProps {
     modality?: string;
     bodyPart?: string;
+    gender?: string;
     onSelect: (content: string) => void;
 }
 
 export function SmartTemplateSelector({
     modality,
     bodyPart,
+    gender,
     onSelect,
 }: SmartTemplateSelectorProps) {
     const [templates, setTemplates] = useState<Template[]>([]);
@@ -37,38 +41,40 @@ export function SmartTemplateSelector({
     const fetchTemplates = useCallback(async () => {
         setLoading(true);
         try {
-            // 1. Try fetching specific to modality
-            const q = modality ? `?modality=${modality}` : "";
-            let r = await axiosInstance.get(`/report-templates/match${q}`);
+            // Build query params with sanitization
+            const params = new URLSearchParams();
 
-            // 2. If no templates found (or specific query returned empty), try fetching all (fallback)
-            if (r.data?.success && (!r.data.data || r.data.data.length === 0) && modality) {
-                const r2 = await axiosInstance.get(`/report-templates/match`); // Fetch all
-                if (r2.data?.success) {
-                    setTemplates(r2.data.data);
-                    return;
-                }
-            }
+            const clean = (val?: string) => {
+                if (!val) return null;
+                const v = val.trim();
+                if (v === "" || v === "—" || v.toLowerCase() === "pending" || v === " ") return null;
+                return v;
+            };
 
-            if (r.data?.success) {
-                setTemplates(r.data.data || []);
+            const m = clean(modality);
+            const b = clean(bodyPart);
+            const g = clean(gender);
+
+            if (m) params.append('modality', m);
+            if (b) params.append('bodyPart', b);
+            if (g) params.append('gender', g);
+
+            const r = await axiosInstance.get(`/report-templates/match?${params.toString()}`);
+
+            if (r.data?.success && r.data.data.length > 0) {
+                setTemplates(r.data.data);
             } else {
-                // Fallback hardcoded for demo
-                setTemplates([
-                    { id: 1, name: "Normal Chest X-Ray", modality: "CR", content: "<p><strong>Findings:</strong> No active lung parenthesis lesion seen.</p>" },
-                    { id: 2, name: "Normal Brain CT", modality: "CT", content: "<p><strong>Findings:</strong> Normal gray-white matter differentiation.</p>" }
-                ]);
+                console.log("⚠️ [Template Match] No specific matches, falling back to all templates...");
+                const allRes = await axiosInstance.get(`/report-templates/match`); // No params = all
+                setTemplates(allRes.data?.data || []);
             }
         } catch (err) {
             console.error(err);
-            setTemplates([
-                { id: 1, name: "Normal Chest X-Ray", modality: "CR", content: "<p><strong>Findings:</strong> No active lung parenthesis lesion seen.</p>" },
-                { id: 2, name: "Normal Brain CT", modality: "CT", content: "<p><strong>Findings:</strong> Normal gray-white matter differentiation.</p>" }
-            ]);
+            setTemplates([]);
         } finally {
             setLoading(false);
         }
-    }, [modality]);
+    }, [modality, bodyPart, gender]);
 
     useEffect(() => {
         if (isOpen) {
@@ -80,11 +86,11 @@ export function SmartTemplateSelector({
         t.name.toLowerCase().includes(search.toLowerCase())
     );
 
-    // Auto-suggestion logic highlighting
-    const suggested = filtered.filter(
-        (t) => t.modality === modality || (modality && t.name.includes(modality))
-    );
-    const others = filtered.filter((t) => !suggested.includes(t));
+    // Auto-suggestion logic: Backend already sorts by relevance!
+    // But we can visually separate the top match if it's highly specific
+    // Top 3 are "Suggested"
+    const suggested = filtered.slice(0, 3);
+    const others = filtered.slice(3);
 
     return (
         <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
@@ -121,12 +127,15 @@ export function SmartTemplateSelector({
                             {suggested.length > 0 && (
                                 <>
                                     <DropdownMenuLabel className="text-xs text-blue-600 px-2 py-1 bg-blue-50/30">
-                                        Suggested for {modality || "Study"}
+                                        Suggested Matches
                                     </DropdownMenuLabel>
                                     {suggested.map(t => (
                                         <DropdownMenuItem key={t.id} onClick={() => onSelect(t.content)} className="cursor-pointer gap-2">
                                             <span className="flex-1 truncate">{t.name}</span>
-                                            {t.modality && <span className="text-[10px] bg-gray-100 text-gray-500 px-1 rounded">{t.modality}</span>}
+                                            <div className="flex gap-1">
+                                                {t.modality && <span className="text-[10px] bg-gray-100 text-gray-500 px-1 rounded">{t.modality}</span>}
+                                                {t.gender && <span className="text-[10px] bg-purple-100 text-purple-600 px-1 rounded">{t.gender}</span>}
+                                            </div>
                                         </DropdownMenuItem>
                                     ))}
                                     <DropdownMenuSeparator />
@@ -136,7 +145,7 @@ export function SmartTemplateSelector({
                             {others.length > 0 && (
                                 <>
                                     <DropdownMenuLabel className="text-xs text-gray-500 px-2 py-1">
-                                        All Templates
+                                        Other Templates
                                     </DropdownMenuLabel>
                                     {others.map(t => (
                                         <DropdownMenuItem key={t.id} onClick={() => onSelect(t.content)} className="cursor-pointer gap-2">

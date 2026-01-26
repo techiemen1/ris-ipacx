@@ -1,8 +1,11 @@
 // src/hooks/useAxios.ts
 import axios from 'axios';
 
+// Use environment variable or default to relative /api for proxy support
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "/api";
+
 const instance = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  baseURL: BACKEND_URL,
   headers: { 'Content-Type': 'application/json' },
 });
 

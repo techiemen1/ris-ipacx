@@ -35,18 +35,19 @@ async function qidoStudies(pacs, opts = {}) {
   const timeout = opts.timeout || 15000;
   let lastErr = null;
 
-
   const queryParams = new URLSearchParams();
 
-  // Date Filtering
+  // Date Filtering: Skip default if specific identifiers are provided
+  const hasSpecificFilter = opts.StudyInstanceUID || opts.AccessionNumber || opts.PatientID;
+
   if (opts.StudyDate) {
     queryParams.append('StudyDate', opts.StudyDate);
   } else if (opts.startDate || opts.endDate) {
     const s = opts.startDate ? opts.startDate.replace(/-/g, '') : '';
     const e = opts.endDate ? opts.endDate.replace(/-/g, '') : '';
     queryParams.append('StudyDate', `${s}-${e}`);
-  } else {
-    // DEFAULT: Last 7 days if no filter provided, to show *some* recent history
+  } else if (!hasSpecificFilter) {
+    // DEFAULT: Last 7 days if no filter provided AND no specific ID provided
     const today = new Date();
     const past = new Date();
     past.setDate(today.getDate() - 7);
@@ -58,7 +59,8 @@ async function qidoStudies(pacs, opts = {}) {
   if (opts.AccessionNumber) queryParams.append('AccessionNumber', opts.AccessionNumber);
   if (opts.PatientID) queryParams.append('PatientID', opts.PatientID);
   if (opts.limit) queryParams.append('limit', opts.limit);
-  // Ensure we get StudyDescription (0008,1030) and ModalitiesInStudy (0008,0061)
+
+  // Ensure we get critical fields
   queryParams.append('includefield', '00081030'); // StudyDescription
   queryParams.append('includefield', '00080061'); // ModalitiesInStudy
   queryParams.append('includefield', '00180015'); // BodyPart
@@ -84,14 +86,11 @@ async function qidoStudies(pacs, opts = {}) {
     } catch (err) {
       lastErr = err;
       if (err.response && err.response.status === 401) {
-        const e = new Error('UNAUTHORIZED');
-        e.detail = err.response.data || err.response.statusText;
-        throw e;
+        throw new Error('UNAUTHORIZED');
       }
     }
   }
 
-  // Fallback: If no QIDO worked, throw error
   const e = new Error('NOT_FOUND');
   e.detail = lastErr && (lastErr.message || (lastErr.response && lastErr.response.statusText));
   throw e;
@@ -127,54 +126,221 @@ async function getDeepMetadata(pacs, studyUID) {
     const baseCandidate = pacs.base_url || `${pacs.host}:${pacs.port}`;
     const base = normalizeBase(baseCandidate);
     const headers = buildAuthHeader(pacs);
+    const finalData = {};
 
-    // QIDO Instance-level query (limit 1 to get header)
-    const url = `${base}/studies/${studyUID}/instances`;
-    const params = new URLSearchParams();
-    params.append('limit', '1');
-    const tags = [
-      '00080060', // Modality
-      '00180015', // BodyPart
-      '00100010', // PatientName
-      '00100020', // PatientID
-      '00100040', // PatientSex
-      '00101010', // PatientAge
-      '00080090', // ReferringPhysician
-      '00080050', // Accession
-      '00080020', // StudyDate
-      '00081030', // StudyDescription
-    ];
-    tags.forEach(t => params.append('includefield', t));
-
-    const res = await axios.get(`${url}?${params.toString()}`, { headers, timeout: 8000 });
-    const match = Array.isArray(res.data) && res.data[0];
-
-    if (!match) return { modality: null, bodyPartExamined: null };
-
-    // Helper to extract QIDO value
-    const val = (tag) => {
-      const v = match[tag]?.Value?.[0];
-      if (typeof v === 'object' && v.Alphabetic) return v.Alphabetic;
-      return v;
+    // --- CONFIG: Critical Tags Mapping ---
+    const TAG_MAP = {
+      patientName: '00100010',
+      patientID: '00100020',
+      accessionNumber: '00080050',
+      studyDate: '00080020',
+      studyDescription: '00081030',
+      referringPhysician: '00080090',
+      patientSex: '00100040',
+      patientAge: '00101010',
+      modality: '00080060',
+      bodyPartExamined: '00180015',
+      institutionName: '00080080'
     };
 
-    return {
-      modality: val('00080060') || null,
-      bodyPartExamined: val('00180015') || null,
-      patientName: val('00100010') || null,
-      patientID: val('00100020') || null,
-      patientSex: val('00100040') || null,
-      patientAge: val('00101010') || null,
-      referringPhysician: val('00080090') || null,
-      accessionNumber: val('00080050') || null,
-      studyDate: val('00080020') || null,
-      studyDescription: val('00081030') || null
+    // --- HELPER: Robust DICOM Value Parser ---
+    const getValue = (obj, tag) => {
+      if (!obj || !obj[tag]) return null;
+      const el = obj[tag];
+      if (el.Value && el.Value.length > 0) {
+        const val = el.Value[0];
+        if (typeof val === 'object' && val !== null) {
+          if (val.Alphabetic) return val.Alphabetic;
+          if (val.Ideographic) return val.Ideographic;
+          if (val.Phonetic) return val.Phonetic;
+          return val;
+        }
+        return val;
+      }
+      if (typeof el === 'string' || typeof el === 'number') return el;
+      return null;
     };
+
+    // Helper: Fill any missing tags from a source object
+    const fillMissing = (source) => {
+      Object.entries(TAG_MAP).forEach(([key, tag]) => {
+        if (!finalData[key]) {
+          const val = getValue(source, tag);
+          if (val) finalData[key] = val;
+        }
+      });
+    };
+
+    // Helper: Is this a "real" image modality?
+    const isImageModality = (m) => {
+      if (!m) return false;
+      const weak = ['SR', 'PR', 'KO', 'OT', 'DOC', 'TXT', 'SEG', 'REG'];
+      return !weak.includes(m.toUpperCase());
+    };
+
+    // Helper: Parse ModalitiesInStudy which can be a string or array
+    const parseModalitiesInStudy = (val) => {
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') return val.split(/[\\\/]/);
+      return [];
+    };
+
+    console.log(`📡 [DeepMeta] Starting scrape for ${studyUID}`);
+
+    // ============================================
+    // LAYER 1: Study Level Tags (Fastest)
+    // ============================================
+    try {
+      const studyUrl = `${base}/studies`;
+      const res = await axios.get(studyUrl, {
+        headers,
+        params: {
+          StudyInstanceUID: studyUID,
+          includefield: Object.values(TAG_MAP).concat(['00080061']) // All tags + ModalitiesInStudy
+        },
+        timeout: 5000
+      });
+      const study = Array.isArray(res.data) ? res.data[0] : (res.data?.data?.[0] || null);
+
+      if (study) {
+        // 1. Fill everything we can find directly
+        fillMissing(study);
+
+        // 2. Special Logic for Modality (Preferred Strong)
+        const modsInStudyRaw = getValue(study, '00080061');
+        const modsList = parseModalitiesInStudy(modsInStudyRaw);
+
+        const strongMod = modsList.find(m => isImageModality(m));
+        if (strongMod) {
+          finalData.modality = strongMod; // Override with strong
+        } else if (modsList.length > 0 && !finalData.modality) {
+          finalData.modality = modsList[0];
+        }
+      }
+    } catch (err) {
+      console.warn("Layer 1 Study Level failed:", err.message);
+    }
+
+    // ============================================
+    // LAYER 2: Series Scan (If key fields missing or weak modality)
+    // ============================================
+    // Check if we are missing ANY critical keys (except maybe Institution which varies)
+    const missingCritical = !finalData.patientID || !finalData.accessionNumber || !finalData.bodyPartExamined;
+    const weakModality = finalData.modality && !isImageModality(finalData.modality);
+
+    if (missingCritical || !finalData.modality || weakModality) {
+      console.log("🔄 [DeepMeta] Layer 1 incomplete. Trying Layer 2 (Series Scan)...");
+      try {
+        const seriesUrl = `${base}/studies/${studyUID}/series`;
+        const seriesRes = await axios.get(seriesUrl, {
+          headers,
+          // Request all tags that might be at series level (Modality, BodyPart, maybe others depending on PACS)
+          params: { includefield: ['00080060', '00180015', '00080050', '0020000E'] },
+          timeout: 6000
+        });
+        const seriesList = Array.isArray(seriesRes.data) ? seriesRes.data : [];
+
+        for (const ser of seriesList) {
+          // Opportunistically fill missing BodyPart or Accession if present on Series
+          fillMissing(ser);
+
+          // Modality Hunt: Look for Strong
+          const m = getValue(ser, '00080060');
+          if (m && isImageModality(m)) {
+            finalData.modality = m;
+            console.log(`✅ [DeepMeta] Layer 2 found strong modality: ${m}`);
+            break;
+          }
+        }
+
+        // Fallback for Modality if still empty
+        if (!finalData.modality && seriesList.length > 0) {
+          finalData.modality = getValue(seriesList[0], '00080060');
+        }
+      } catch (err) {
+        console.warn("Layer 2 Series Scan failed:", err.message);
+      }
+    }
+
+    // ============================================
+    // LAYER 3: Instance/Metadata (Heavy Dump - Gold Standard for missing tags)
+    // ============================================
+    // Re-evaluate missing keys
+    const stillMissingCritical = !finalData.patientID || !finalData.accessionNumber || !finalData.bodyPartExamined || !finalData.referringPhysician;
+    const stillWeakModality = finalData.modality && !isImageModality(finalData.modality);
+
+    if (stillMissingCritical || !finalData.modality || stillWeakModality) {
+      try {
+        console.log("🔄 [DeepMeta] Still missing data. Trying Layer 3 (Instance Dump)...");
+        const qidoUrl = `${base}/studies/${studyUID}/instances`;
+        const res = await axios.get(qidoUrl, {
+          headers,
+          params: {
+            limit: 1,
+            includefield: Object.values(TAG_MAP) // Request EVERYTHING
+          },
+          timeout: 5000
+        });
+
+        const instance = Array.isArray(res.data) ? res.data[0] : null;
+        if (instance) {
+          fillMissing(instance);
+
+          // Modality specific override: If we have a weak one, and instance gives a strong one, take it.
+          // OR if instance gives a strong one and we have nothing.
+          // But wait, if instance is just one, it might be the SR instance.
+          // So we only override if what we have is WRONG/MISSING.
+          // Actually, usually 'instances' endpoint returns the *first* instance, which is random.
+          // But if we specifically want Modality, we trust our Layer 1/2 more for the *Study* modality unless they failed.
+
+          const m = getValue(instance, '00080060');
+          if (m && isImageModality(m) && (!finalData.modality || !isImageModality(finalData.modality))) {
+            finalData.modality = m;
+          }
+        }
+      } catch (err) {
+        console.warn("Layer 3 Instance Dump failed:", err.message);
+      }
+    }
+
+    // ============================================
+    // LAYER 4: Study Description Heuristic (Last Resort)
+    // ============================================
+    if (!finalData.modality || !isImageModality(finalData.modality)) {
+      try {
+        const d = String(finalData.studyDescription || "").toUpperCase();
+        if (d) {
+          console.log(`🔍 [DeepMeta] Layer 4 Heuristic checking desc: "${d}"`);
+
+          let inferred = null;
+          if (/\bCT\b/.test(d)) inferred = 'CT';
+          else if (/\bMR\b/.test(d) || /\bMRI\b/.test(d)) inferred = 'MR';
+          else if (/\bXR\b/.test(d) || /\bX-RAY\b/.test(d) || /\bXRAY\b/.test(d)) inferred = 'XR';
+          else if (/\bUS\b/.test(d) || /\bUSG\b/.test(d) || /\bULTRASOUND\b/.test(d)) inferred = 'US';
+          else if (/\bCR\b/.test(d)) inferred = 'CR';
+          else if (/\bDX\b/.test(d)) inferred = 'DX';
+          else if (/\bMG\b/.test(d) || /\bMAMMO\b/.test(d)) inferred = 'MG';
+          else if (/\bPT\b/.test(d) || /\bPET\b/.test(d)) inferred = 'PT';
+          else if (/\bNM\b/.test(d)) inferred = 'NM';
+
+          if (inferred) {
+            finalData.modality = inferred;
+            console.log(`✅ [DeepMeta] Layer 4 Heuristic assigned: ${inferred}`);
+          }
+        }
+      } catch (err) {
+        console.warn("Layer 4 Heuristic failed:", err.message);
+      }
+    }
+
+    return finalData;
+
   } catch (err) {
-    console.error("getDeepMetadata failed", err.message);
-    return { modality: null, bodyPartExamined: null };
+    console.error("getDeepMetadata (Global) failed", err.message);
+    return {};
   }
 }
+
 
 async function updateLastConnected(pacsId) {
   if (!pacsId) return;

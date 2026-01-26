@@ -27,7 +27,7 @@ const ConsentManager: React.FC<ConsentManagerProps> = ({ patientId, patientName,
 
     const fetchConsents = useCallback(async () => {
         try {
-            const res = await axios.get(`http://localhost:5000/api/consents/${patientId}`, {
+            const res = await axios.get(`/api/consents/${patientId}`, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             });
             setConsents(res.data);
@@ -45,7 +45,7 @@ const ConsentManager: React.FC<ConsentManagerProps> = ({ patientId, patientName,
         if (!isAgreed || !signerName) return toast.error("Please agree and sign");
 
         try {
-            await axios.post('http://localhost:5000/api/consents', {
+            await axios.post(`/api/consents`, {
                 patient_id: patientId,
                 consent_type: newConsentType,
                 signed_by: signerName,
@@ -67,7 +67,7 @@ const ConsentManager: React.FC<ConsentManagerProps> = ({ patientId, patientName,
     const handleRevoke = async (id: number) => {
         if (!window.confirm("Are you sure you want to revoke this consent?")) return;
         try {
-            await axios.put(`http://localhost:5000/api/consents/${id}/revoke`, {}, {
+            await axios.put(`/api/consents/${id}/revoke`, {}, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             });
             toast.success("Consent Revoked");

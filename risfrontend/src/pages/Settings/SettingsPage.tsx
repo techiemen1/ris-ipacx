@@ -90,7 +90,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
 
   // Danger Zone Filter State
-  const [dangerFilters, setDangerFilters] = useState({ patientId: "", dateFrom: "", dateTo: "" });
+  const [dangerFilters, setDangerFilters] = useState({ patientId: "", accession: "", dateFrom: "", dateTo: "" });
   // ... rest of component code ...
 
   // load settings once
@@ -514,22 +514,31 @@ export default function SettingsPage() {
 
               {/* Alert Box */}
               <div className="bg-red-50 text-red-800 p-4 rounded-md text-sm border border-red-200">
-                <strong>Warning:</strong> Actions here are irreversible. Please be certain before proceeding.
-                Use filters below to delete specific records, otherwise ALL records of that type will be deleted.
+                <strong>Medical-Legal Warning:</strong> Actions here are irreversible. Report deletion is strictly audited and restricted to Administrative personnel only.
+                Use filters below to specify the Patient ID or Accession Number to be removed.
               </div>
 
               {/* Filters Section */}
               <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
                 <h3 className="font-semibold text-slate-700 mb-3 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-500"></span> Selective Deletion Filters
+                  <span className="w-2 h-2 rounded-full bg-blue-500"></span> Selective Deletion (Audit Required)
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Patient ID (Exact Match)</label>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Patient ID</label>
                     <Input
                       value={dangerFilters.patientId}
                       onChange={e => setDangerFilters(p => ({ ...p, patientId: e.target.value }))}
-                      placeholder="e.g. PAT-1234"
+                      placeholder="PAT-1234"
+                      className="bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 mb-1">Accession #</label>
+                    <Input
+                      value={dangerFilters.accession}
+                      onChange={e => setDangerFilters(p => ({ ...p, accession: e.target.value }))}
+                      placeholder="ACC-61305"
                       className="bg-white"
                     />
                   </div>
@@ -592,19 +601,35 @@ export default function SettingsPage() {
                   />
                 </div>
 
+                {/* Project Cache Cleanup */}
+                <div className="border border-blue-100 rounded-lg p-5 bg-white shadow-sm flex flex-col">
+                  <h3 className="font-semibold text-gray-800 mb-1">Project Cache</h3>
+                  <p className="text-xs text-gray-500 mb-4 flex-1">
+                    Clears local study metadata and pre-fetched DICOM tags. Data will be re-synced from PACS when next visited.
+                  </p>
+                  <DangerAction
+                    label="Clear Project Cache"
+                    actionType="pacsCache"
+                    onConfirm={async () => {
+                      await axiosInstance.post("/admin/cleanup", { type: "pacsCache", filters: dangerFilters });
+                      toast.success("Project Cache cleared");
+                    }}
+                  />
+                </div>
+
                 {/* EVERYTHING Cleanup */}
                 <div className="border border-red-200 rounded-lg p-5 bg-red-50/30 shadow-sm flex flex-col relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-1 bg-red-100 rounded-bl text-[10px] font-bold text-red-600 uppercase">Extreme</div>
                   <h3 className="font-semibold text-red-900 mb-1">Delete Everything</h3>
                   <p className="text-xs text-red-700/70 mb-4 flex-1">
-                    Wipes EVERYTHING matching filters: Patients, Orders, Reports, Billing.
+                    Wipes EVERYTHING matching filters: Patients, Orders, Reports, Billing, and PACS Cache.
                   </p>
                   <DangerAction
                     label="Delete Everything"
                     actionType="everything"
                     onConfirm={async () => {
                       await axiosInstance.post("/admin/cleanup", { type: "everything", filters: dangerFilters });
-                      toast.success("Data wiped successfully");
+                      toast.success("All data wiped successfully");
                     }}
                   />
                 </div>

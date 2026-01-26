@@ -195,8 +195,19 @@ app.use((err, req, res, next) => {
 })();
 
 const PORT = process.env.PORT || 5000;
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 iPacx RIS Server running on http://0.0.0.0:${PORT}`);
+
+// HTTPS Setup for Universal Microphone Access
+const https = require('https');
+const fs = require('fs');
+
+const httpsOptions = {
+  key: fs.readFileSync(path.join(__dirname, '../key.pem')),
+  cert: fs.readFileSync(path.join(__dirname, '../cert.pem'))
+};
+
+const server = https.createServer(httpsOptions, app).listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 iPacx RIS Server running on https://0.0.0.0:${PORT}`);
+  console.log(`🔒 HTTPS enabled - Microphone access available everywhere`);
 });
 
 /* =========================================================

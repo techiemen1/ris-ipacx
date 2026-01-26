@@ -6,9 +6,8 @@ import axios from "axios";
  */
 
 const axiosInstance = axios.create({
-  // Dynamically set baseURL: If env var exists, use it. 
-  // Otherwise build it from current window.location to support LAN (e.g. 192.168.x.x:5000)
-  baseURL: import.meta.env.VITE_API_URL || `${window.location.protocol}//${window.location.hostname}:5000/api`,
+  // Use relative path so Vite proxy (dev) or Nginx (prod) handles it correctly
+  baseURL: import.meta.env.VITE_API_URL || "/api",
   withCredentials: false, // Disabled to avoid CORS credential issues on LAN (we use Bearer token)
   headers: {
     "Cache-Control": "no-cache",

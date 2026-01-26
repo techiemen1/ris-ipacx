@@ -11,7 +11,7 @@ exports.generatePdf = async (req, res) => {
     // 1. Fetch Report Data
     const qReport = `
       SELECT study_instance_uid, content, status, patient_name, patient_id,
-             accession_number, modality, study_date, created_by, created_at
+             accession_number, modality, study_date, created_by, created_at, report_title
       FROM pacs_reports
       WHERE study_instance_uid = $1
       ORDER BY updated_at DESC NULLS LAST, created_at DESC
@@ -145,7 +145,7 @@ exports.generatePdf = async (req, res) => {
         </div>
 
         <!-- Report Body -->
-        <div class="report-title">Radiology Report</div>
+        <div class="report-title">${rep.report_title || "RADIOLOGY REPORT"}</div>
         
         <div class="report-content">
            ${safeContent}
@@ -181,8 +181,10 @@ exports.generatePdf = async (req, res) => {
     `;
 
     const buffer = await pdfService.generatePdfBuffer(html);
+    const safeName = (rep.patient_name || "Report").replace(/[^a-z0-9]/gi, '_');
+    const acc = rep.accession_number || "000";
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="report_${studyId}.pdf"`);
+    res.setHeader("Content-Disposition", `inline; filename="report_${safeName}_${acc}.pdf"`);
     return res.send(buffer);
   } catch (err) {
     console.error("generatePdf error", err);

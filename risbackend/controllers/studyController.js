@@ -48,71 +48,106 @@ exports.getStudyMeta = async (req, res) => {
       console.warn("Local meta fetch failed", e.message);
     }
 
-    // 2. Fetch PACS Data
+    // 2. Fetch PACS Data (Loop through all active servers if needed)
     try {
-      const pacsRes = await pool.query(`SELECT * FROM pacs_servers WHERE is_active = true ORDER BY id LIMIT 1`);
-      const pacs = pacsRes.rows[0];
-      if (pacs) {
-        // Fetch from QIDO
-        const studies = await pacsService.qidoStudies(pacs, { StudyInstanceUID: studyUID });
-        const match = studies?.find(
-          (s) => s.StudyInstanceUID === studyUID || s["0020000D"]?.Value?.[0] === studyUID
-        );
+      const pacsServers = await pool.query(`SELECT * FROM pacs_servers WHERE is_active = true ORDER BY id`);
 
-        const val = (tag, key) => {
-          if (!match) return undefined;
-          if (match[key] !== undefined) return match[key];
-          if (match[tag]?.Value?.[0]?.Alphabetic) return match[tag].Value[0].Alphabetic;
-          if (match[tag]?.Value?.[0]) return match[tag].Value[0];
-          return undefined;
-        };
+      for (const pacs of pacsServers.rows) {
+        try {
+          // Fetch from QIDO
+          const studies = await pacsService.qidoStudies(pacs, { StudyInstanceUID: studyUID });
+          const match = studies?.find(
+            (s) => s.StudyInstanceUID === studyUID || s["0020000D"]?.Value?.[0] === studyUID
+          );
 
-        let pName = cleanName(val("00100010", "PatientName"));
-        let pID = val("00100020", "PatientID");
-        let pSex = val("00100040", "PatientSex");
-        let pAge = val("00101010", "PatientAge");
-        let accession = val("00080050", "AccessionNumber");
-        let studyDate = val("00080020", "StudyDate");
-        let refPhys = cleanName(val("00080090", "ReferringPhysicianName"));
-        let modality = (match && Array.isArray(match.ModalitiesInStudy) && match.ModalitiesInStudy[0]) || val("00080060", "Modality");
-        let bodyPart = val("00180015", "BodyPartExamined");
+          if (!match) continue; // Try next server
 
-        // Deep Scrape Fallback: If critical fields are missing
-        if (!modality || !bodyPart || !pSex || !pAge || !refPhys) {
-          console.log(`🔍 Deep Scraping DICOM for ${studyUID}...`);
-          const deepMatch = await pacsService.getDeepMetadata(pacs, studyUID);
-          if (deepMatch) {
-            if (!modality && deepMatch.modality) modality = deepMatch.modality;
-            if (!bodyPart && deepMatch.bodyPartExamined) bodyPart = deepMatch.bodyPartExamined;
-            if (!pName && deepMatch.patientName) pName = cleanName(deepMatch.patientName);
-            if (!pID && deepMatch.patientID) pID = deepMatch.patientID;
-            if (!pSex && deepMatch.patientSex) pSex = deepMatch.patientSex;
-            if (!pAge && deepMatch.patientAge) pAge = deepMatch.patientAge;
-            if (!refPhys && deepMatch.referringPhysician) refPhys = cleanName(deepMatch.referringPhysician);
-            if (!accession && deepMatch.accessionNumber) accession = deepMatch.accessionNumber;
-            if (!studyDate && deepMatch.studyDate) studyDate = deepMatch.studyDate;
+          const val = (tag, key) => {
+            if (!match) return undefined;
+            if (match[key] !== undefined) return match[key];
+            if (match[tag]?.Value?.[0]?.Alphabetic) return match[tag].Value[0].Alphabetic;
+            if (match[tag]?.Value?.[0]) return match[tag].Value[0];
+            return undefined;
+          };
+
+          // Helper to check for strong image modalities
+          const isImageModality = (m) => {
+            if (!m) return false;
+            const weak = ['SR', 'PR', 'KO', 'OT', 'DOC', 'TXT', 'SEG', 'REG'];
+            return !weak.includes(m.toUpperCase());
+          };
+
+          let pName = cleanName(val("00100010", "PatientName"));
+          let pID = val("00100020", "PatientID");
+          let pSex = val("00100040", "PatientSex");
+          let pAge = val("00101010", "PatientAge");
+          let accession = val("00080050", "AccessionNumber");
+          let studyDate = val("00080020", "StudyDate");
+          let refPhys = cleanName(val("00080090", "ReferringPhysicianName"));
+
+          // Improved Modality Selection from Initial List
+          let rawMods = (match && (match.ModalitiesInStudy || match["00080061"]?.Value));
+          let modality = null;
+
+          if (Array.isArray(rawMods)) {
+            // Try to find a strong one in the list
+            modality = rawMods.find(m => isImageModality(m)) || rawMods[0];
+          } else if (rawMods) {
+            modality = rawMods;
+          } else {
+            modality = val("00080060", "Modality");
           }
-        }
 
-        pacsMeta = {
-          patientName: pName,
-          patientID: pID,
-          modality: modality,
-          accessionNumber: accession,
-          studyDate: studyDate,
-          patientSex: pSex,
-          patientAge: pAge,
-          referringPhysician: refPhys,
-          bodyPart: bodyPart,
-        };
+          let bodyPart = val("00180015", "BodyPartExamined");
+
+          // Deep Scrape Fallback
+          // Trigger if missing critical data OR if modality is "weak" (e.g. SR/PR)
+          let deepMatch = null;
+          if (!modality || !isImageModality(modality) || !bodyPart || !pSex || !pAge || !refPhys || !accession) {
+            console.log(`🔍 Deep Scraping DICOM for ${studyUID} on server ${pacs.aetitle} (Modality: ${modality}, BodyPart: ${bodyPart})...`);
+            deepMatch = await pacsService.getDeepMetadata(pacs, studyUID);
+            if (deepMatch) {
+              // Override if we have no modality OR if current is weak and new is strong
+              if (deepMatch.modality) {
+                if (!modality || (isImageModality(deepMatch.modality) && !isImageModality(modality))) {
+                  modality = deepMatch.modality;
+                }
+              }
+              if (!bodyPart) bodyPart = deepMatch.bodyPartExamined;
+              if (!pName) pName = cleanName(deepMatch.patientName);
+              if (!pID) pID = deepMatch.patientID;
+              if (!pSex) pSex = deepMatch.patientSex;
+              if (!pAge) pAge = deepMatch.patientAge;
+              if (!refPhys) refPhys = cleanName(deepMatch.referringPhysician);
+              if (!accession) accession = deepMatch.accessionNumber;
+              if (!studyDate) studyDate = deepMatch.studyDate;
+            }
+          }
+
+          pacsMeta = {
+            patientName: pName,
+            patientID: pID,
+            modality: modality,
+            accessionNumber: accession,
+            studyDate: studyDate,
+            patientSex: pSex,
+            patientAge: pAge,
+            referringPhysician: refPhys,
+            bodyPart: bodyPart,
+            debug: { server: pacs.aetitle, found: true, deep: !!deepMatch }
+          };
+          break; // Found it, stop looping servers
+        } catch (innerE) {
+          console.warn(`Fetch from PACS ${pacs.aetitle} failed:`, innerE.message);
+        }
       }
     } catch (e) {
-      console.warn("PACS fetch failed", e.message);
+      console.warn("PACS servers query failed", e.message);
     }
 
     // 3. Merge: Local > PACS
     const final = {};
-    const keys = ["patientName", "patientID", "modality", "accessionNumber", "studyDate", "patientSex", "patientAge", "referringPhysician", "bodyPart", "created_at"];
+    const keys = ["patientName", "patientID", "modality", "accessionNumber", "studyDate", "patientSex", "patientAge", "referringPhysician", "bodyPart", "created_at", "debug"];
 
     keys.forEach(k => {
       if (localMeta[k] !== undefined && localMeta[k] !== null && localMeta[k] !== "") {
@@ -122,7 +157,7 @@ exports.getStudyMeta = async (req, res) => {
       }
     });
 
-    // 4. INSTANT CACHING: Save merged results to local DB if not already there or if new info found
+    // 4. Instant Caching
     if (Object.keys(pacsMeta).length > 0) {
       try {
         await pool.query(
@@ -141,35 +176,20 @@ exports.getStudyMeta = async (req, res) => {
              referring_physician = COALESCE(NULLIF(study_metadata.referring_physician, ''), EXCLUDED.referring_physician),
              body_part = COALESCE(NULLIF(study_metadata.body_part, ''), EXCLUDED.body_part)
           `,
-          [
-            studyUID,
-            final.patientName,
-            final.patientID,
-            final.modality,
-            final.accessionNumber,
-            final.studyDate || null,
-            final.patientSex,
-            final.patientAge,
-            final.referringPhysician,
-            final.bodyPart
-          ]
+          [studyUID, final.patientName, final.patientID, final.modality, final.accessionNumber, final.studyDate || null, final.patientSex, final.patientAge, final.referringPhysician, final.bodyPart]
         );
       } catch (cacheErr) {
         console.warn("Instant caching failed", cacheErr.message);
       }
     }
 
-    // Fallback: If studyDate is missing but we have a created_at from local meta, use that
+    // Date post-processing
     if (!final.studyDate && localMeta.created_at) {
       const d = new Date(localMeta.created_at);
       if (!isNaN(d.getTime())) {
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        final.studyDate = `${y}${m}${day}`;
+        final.studyDate = d.toISOString().slice(0, 10).replace(/-/g, '');
       }
     }
-
     if (final.studyDate && typeof final.studyDate === 'string') {
       final.studyDate = final.studyDate.replace(/-/g, '').slice(0, 8);
     }
@@ -179,6 +199,67 @@ exports.getStudyMeta = async (req, res) => {
 
   } catch (err) {
     console.error("getStudyMeta error:", err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+/**
+ * GET /api/studies/:studyUID/dicom-tags
+ * Specific endpoint for deep scraping tags for the report header
+ */
+exports.getDicomTags = async (req, res) => {
+  const { studyUID } = req.params;
+  try {
+    const pacsServers = await pool.query(`SELECT * FROM pacs_servers WHERE is_active = true ORDER BY id`);
+    let tags = null;
+
+    for (const pacs of pacsServers.rows) {
+      try {
+        console.log(`🔍 Deep Scraping Tags for ${studyUID} on ${pacs.aetitle}...`);
+        const result = await pacsService.getDeepMetadata(pacs, studyUID);
+        if (result && Object.keys(result).length > 0) {
+          tags = result;
+          break;
+        }
+      } catch (e) {
+        console.warn(`Deep scrape failed on ${pacs.aetitle}`, e.message);
+      }
+    }
+
+    // 2. Fallback/Merge with local metadata (VERY IMPORTANT for Modality/Accession/BodyPart)
+    const local = await pool.query('SELECT * FROM study_metadata WHERE study_instance_uid = $1', [studyUID]);
+    const localRow = local.rows[0] || {};
+
+    if (tags || localRow.study_instance_uid) {
+      // Map and prioritize local data if it exists
+      const merged = { ...tags };
+      if (localRow.modality && localRow.modality !== "") merged.modality = localRow.modality;
+      if (localRow.patient_name) merged.patientName = localRow.patient_name;
+      if (localRow.patient_id) merged.patientID = localRow.patient_id;
+      if (localRow.accession_number) merged.accessionNumber = localRow.accession_number;
+      if (localRow.study_date) merged.studyDate = localRow.study_date;
+      if (localRow.patient_sex) merged.patientSex = localRow.patient_sex;
+      if (localRow.patient_age) merged.patientAge = localRow.patient_age;
+      if (localRow.referring_physician) merged.referringPhysician = localRow.referring_physician;
+      if (localRow.body_part) merged.bodyPartExamined = localRow.body_part;
+
+      const mappedTags = {
+        patientName: cleanName(merged.patientName),
+        patientID: merged.patientID,
+        modality: merged.modality || "—",
+        accessionNumber: merged.accessionNumber,
+        studyDate: merged.studyDate,
+        patientSex: merged.patientSex,
+        patientAge: merged.patientAge,
+        referringPhysician: cleanName(merged.referringPhysician),
+        bodyPart: merged.bodyPartExamined
+      };
+      return res.json({ success: true, tags: mappedTags });
+    }
+
+    res.status(404).json({ success: false, message: "Tags not found" });
+  } catch (err) {
+    console.error("getDicomTags error:", err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };

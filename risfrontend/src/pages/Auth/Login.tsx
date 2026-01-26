@@ -31,7 +31,13 @@ const Login: React.FC = () => {
       navigate("/");
     } catch (err: any) {
       console.error("[LOGIN ERROR]", err.response?.data || err.message);
-      setError(err.response?.data?.error || err.message || "Login failed");
+      let errorMessage = err.response?.data?.error || err.message || "Login failed";
+
+      if (err.message === "Network Error") {
+        errorMessage = "Network Error: Please check if the server is running or accept the SSL certificate if prompted.";
+      }
+
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }

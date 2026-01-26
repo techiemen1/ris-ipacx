@@ -1,9 +1,18 @@
 /* src/pages/ReportEditor.css */
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Inter:wght@400;500;600;700&display=swap');
+
+/* Font Families */
+.font-cursive {
+  font-family: 'Dancing Script', cursive;
+}
+
+.font-sans {
+  font-family: 'Inter', sans-serif;
+}
 
 /* A4 Page Layout */
 .print-layout-container {
-  background-color: #e5e7eb;
-  /* gray-200 */
+  background-color: #f1f5f9;
   padding: 2rem;
   overflow-y: auto;
   height: 100%;
@@ -11,83 +20,452 @@
   justify-content: center;
 }
 
-.print-page {
-  background-color: white;
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+  border: 2px solid #f1f5f9;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* MS Word-like paper look in Editor */
+.printable-area {
+  background: white;
   width: 210mm;
   min-height: 297mm;
-  padding: 20mm;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-  margin-bottom: 2rem;
-  outline: none;
+  margin: 1rem auto;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  padding: 10mm;
+  /* Reduced from 15mm to Shift Up */
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  background-image: linear-gradient(to bottom, transparent 296mm, #e2e8f0 296mm, #e2e8f0 297mm, transparent 297mm);
+  background-size: 100% 297mm;
 }
 
-.print-page:focus {
-  outline: none;
+
+/* Page Indicator for Editor Only */
+.printable-area::after {
+  content: "Page 1 Page 2 Page 3 Page 4";
+  position: absolute;
+  top: 298mm;
+  left: -40px;
+  writing-mode: vertical-rl;
+  font-size: 10px;
+  color: #94a3b8;
+  letter-spacing: 280mm;
+  pointer-events: none;
 }
 
-/* TipTap Editor Styles inside Page */
+/* Main Table for Layout */
+table.main-table,
+table.main-table td {
+  border: none !important;
+}
+
+table.main-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.report-content-cell {
+  vertical-align: top;
+  padding: 5mm 0;
+  min-height: 190mm;
+  /* Pushes footer to the bottom of the A4 page */
+}
+
+/* Only Print Elements */
+.only-print {
+  display: none !important;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 5mm 10mm;
+  }
+
+  body {
+    background: white;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* CRITICAL: Block display & Reset Transform for Fixed Footer to work */
+  .printable-area {
+    display: block !important;
+    transform: none !important;
+    /* Fixes position: fixed relativity */
+    margin: 0;
+    box-shadow: none;
+    width: 100%;
+    min-height: auto;
+    padding: 0;
+    padding-top: 5mm;
+    /* Restore padding to push header down a bit */
+    background: none;
+    overflow: visible !important;
+    /* Critical for pagination */
+  }
+
+  /* Force Header Repetition */
+  thead {
+    display: table-header-group !important;
+  }
+
+  tr {
+    page-break-inside: auto !important;
+    /* Allow rows to break naturally, but header repeats */
+  }
+
+  /* Hide page indicator */
+  .printable-area::after {
+    display: none;
+  }
+
+  .no-print,
+  .toolbar-glass,
+  .status-bar-glass {
+    display: none !important;
+  }
+
+  .only-print {
+    display: inline-block !important;
+  }
+
+  /* Fixed Footer */
+  .fixed-footer-stripe {
+    position: fixed;
+    bottom: 0px;
+    left: 0px;
+    right: 0px;
+    background: white;
+    z-index: 9999;
+    padding-bottom: 5mm;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Space Reservation */
+  tfoot {
+    display: table-footer-group;
+  }
+
+  .footer-spacer {
+    height: 10mm;
+    /* Reduced spacer to prevent pushing to next page */
+    visibility: hidden;
+  }
+
+  .signature-block {
+    page-break-inside: avoid;
+    margin-top: 2rem;
+  }
+
+  input,
+  textarea {
+    border: none;
+    background: transparent;
+    resize: none;
+    padding: 0;
+  }
+
+  /* Reset layout for print */
+  html,
+  body,
+  #root,
+  .flex-1,
+  .overflow-hidden,
+  .custom-scrollbar {
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Robust Visibility Toggle */
+  body * {
+    visibility: hidden !important;
+  }
+
+  .printable-area,
+  .printable-area * {
+    visibility: visible !important;
+  }
+
+  .printable-area {
+    visibility: visible !important;
+    position: relative !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    background-image: none !important;
+    display: table !important;
+    page-break-after: avoid !important;
+    page-break-before: avoid !important;
+  }
+
+  .printable-area::after {
+    display: none !important;
+    content: none !important;
+  }
+
+  /* repeatable header/footer logic */
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-footer-group !important;
+    vertical-align: bottom !important;
+  }
+
+  /* Trick to push tfoot to bottom of the last page */
+
+
+  /* Prevent row internal breaks */
+  tr {
+    page-break-inside: avoid !important;
+  }
+
+  /* Universal Border Intensity - ONLY for patient card */
+  .patient-card-table,
+  .patient-card-table td {
+    border: 1pt solid black !important;
+  }
+
+  .main-table,
+  .main-table td {
+    border: none !important;
+  }
+
+  /* Hide UI elements */
+  .no-print,
+  input,
+  textarea,
+  button,
+  .fixed-portal-root {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .only-print {
+    display: inline-block !important;
+    width: auto;
+  }
+
+  .contact-line.only-print {
+    display: flex !important;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* Static Print Values */
+  .print-val {
+    display: inline-block !important;
+    font-weight: 800 !important;
+    color: black !important;
+    font-size: 11pt !important;
+    line-height: 1.2 !important;
+  }
+
+  /* Professional Pinned Footer - Pushed DOWN */
+  .footer-container {
+    position: fixed;
+    bottom: 5mm;
+    /* Pushed down */
+    left: 10mm;
+    right: 10mm;
+    padding-top: 10px !important;
+    border-top: none !important;
+    page-break-inside: avoid !important;
+    background: white;
+  }
+
+  /* Ensure main content doesn't overlap with fixed footer */
+  .main-table {
+    margin-bottom: 5mm;
+  }
+
+  /* Page Counter in Print */
+  body {
+    counter-reset: page;
+  }
+
+  .page-number::after {
+    counter-increment: page;
+    content: "Page " counter(page);
+    font-weight: 700;
+    color: #4f46e5;
+  }
+}
+
 .ProseMirror {
   outline: none;
-  min-height: 100%;
+  font-size: 11pt;
+  line-height: 1.6;
 }
 
 .ProseMirror p {
   margin-bottom: 0.5em;
-  line-height: 1.5;
 }
 
-.ProseMirror table {
+/* Glassmorphism Ultilities */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+
+.glass-toolbar {
+  background: rgba(15, 23, 42, 0.85);
+  /* Slate-900 with opacity */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-button:hover {
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(4px);
+}
+
+/* Patient Card Grid - Fix Overlap & Premium Look */
+.patient-card-table {
   border-collapse: collapse;
-  margin: 0;
-  overflow: hidden;
-  table-layout: fixed;
   width: 100%;
+  table-layout: fixed;
+  border: 1.5pt solid black;
 }
 
-.ProseMirror td,
-.ProseMirror th {
-  border: 1px solid #ced4da;
-  box-sizing: border-box;
-  min-width: 1em;
-  padding: 3px 5px;
+.patient-card-table td {
+  border: 1pt solid black;
+  padding: 4px 8px;
+  /* Slightly reduced padding to give text more room */
+  font-size: 11pt;
+  line-height: 1.25;
+  overflow: hidden;
+  /* Prevent spillover */
+  text-overflow: ellipsis;
+  /* Ellipsis for really long text if it still overflows */
+  vertical-align: middle;
+}
+
+.patient-card-table .label-cell {
+  background-color: #f1f5f9;
+  /* Slate-100 */
+  color: black;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* Keep labels on one line */
+}
+
+.patient-card-table .val-cell {
+  color: black;
+  font-weight: 600;
   position: relative;
-  vertical-align: top;
 }
 
-.ProseMirror th {
-  background-color: #f1f3f5;
-  font-weight: bold;
-  text-align: left;
+/* Premium Input Reset */
+.field-input-reset {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  display: block;
 }
 
-.ProseMirror .selectedCell:after {
-  background: rgba(200, 200, 255, 0.4);
-  content: "";
-  left: 0;
-  right: 0;
-  top: 0;
-  bottom: 0;
+.field-input-reset:focus {
+  background-color: rgba(59, 130, 246, 0.05);
+  /* Very subtle blue focus */
+  border-radius: 2px;
+}
+
+/* Expert Compact Footer */
+.contact-line {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  font-size: 8.5pt;
+  color: #334155;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.contact-line>div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* --- PREMIUM MEDICAL GRADE UI --- */
+
+/* 1. Standard Serif Font for Authority */
+.font-serif-premium {
+  font-family: 'Times New Roman', Times, serif;
+}
+
+/* 2. Watermark */
+.watermark {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  font-size: 8rem;
+  font-weight: 900;
+  color: #0f172a;
+  opacity: 0.04;
   pointer-events: none;
-  position: absolute;
-  z-index: 2;
+  white-space: nowrap;
+  z-index: -1;
 }
 
-
-.ProseMirror .column-resize-handle {
-  background-color: #adf;
-  bottom: -2px;
-  position: absolute;
-  right: -2px;
-  pointer-events: none;
-  top: 0;
-  width: 4px;
+/* 3. Boxed Table - Premium Grid Look */
+.patient-card-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.5rem;
+  border: 1.5pt solid black !important;
 }
 
-/* FIX: Force Side-by-Side Images (Override Tailwind Prose/Block defaults) */
-.ProseMirror img {
-  display: inline-block !important;
-  margin: 4px !important;
-  vertical-align: top !important;
-  float: none !important;
-  /* Ensure flow layout */
+.patient-card-table td {
+  border: 1pt solid black !important;
+  padding: 3px 4px;
+  vertical-align: middle;
 }

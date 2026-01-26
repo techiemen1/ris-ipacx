@@ -28,7 +28,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (token) {
         try {
           // Attempt refresh
-          const response = await fetch("http://localhost:5000/api/auth/refresh", {
+          const response = await fetch(`/api/auth/refresh`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ token }),

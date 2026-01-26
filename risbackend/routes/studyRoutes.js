@@ -11,7 +11,7 @@ const ctrl = require("../controllers/studyController");
  */
 router.get("/", auth, ctrl.getAllStudies);
 router.get("/:studyUID/meta", auth, ctrl.getStudyMeta);
-
+router.get("/:studyUID/dicom-tags", auth, ctrl.getDicomTags);
 
 /**
  * Update/Override Study Metadata manually

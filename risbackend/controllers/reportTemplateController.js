@@ -21,7 +21,7 @@ exports.listTemplates = async (req, res) => {
 /* ================= CREATE ================= */
 exports.createTemplate = async (req, res) => {
   try {
-    const { name, modality, body_part, content } = req.body;
+    const { name, modality, body_part, content, gender } = req.body;
 
     if (!name || !content) {
       return res
@@ -32,11 +32,11 @@ exports.createTemplate = async (req, res) => {
     const r = await pool.query(
       `
       INSERT INTO report_templates
-        (name, modality, body_part, content)
-      VALUES ($1, $2, $3, $4)
+        (name, modality, body_part, content, gender)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING *
       `,
-      [name, modality || null, body_part || null, content]
+      [name, modality || null, body_part || null, content, gender || null]
     );
 
     res.status(201).json({ success: true, data: r.rows[0] });
@@ -50,7 +50,7 @@ exports.createTemplate = async (req, res) => {
 exports.updateTemplate = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, modality, body_part, content } = req.body;
+    const { name, modality, body_part, content, gender } = req.body;
 
     const r = await pool.query(
       `
@@ -60,11 +60,12 @@ exports.updateTemplate = async (req, res) => {
         modality = $2,
         body_part = $3,
         content = $4,
+        gender = $5,
         updated_at = now()
-      WHERE id = $5
+      WHERE id = $6
       RETURNING *
       `,
-      [name, modality || null, body_part || null, content, id]
+      [name, modality || null, body_part || null, content, gender || null, id]
     );
 
     if (r.rowCount === 0) {
@@ -102,18 +103,45 @@ exports.disableTemplate = async (req, res) => {
 /* ================= MATCH (EDITOR) ================= */
 exports.matchTemplates = async (req, res) => {
   try {
-    const { modality, bodyPart } = req.query;
+    const { modality, bodyPart, gender } = req.query;
+    console.log(`🔍 [Template Match] Params: Modality="${modality}", BodyPart="${bodyPart}", Gender="${gender}"`);
+
+    // Advanced Ranking:
+    // 1. Exact Match (Modality + BodyPart + Gender)
+    // 2. Modality + BodyPart (Gender NULL)
+    // 3. Modality Matches (BodyPart NULL, Gender NULL/Match)
+    const cleanP = (v) => {
+      if (!v) return null;
+      const s = String(v).trim();
+      if (s === '-' || s === '—' || s.toLowerCase() === 'pending' || s === '') return null;
+      return s;
+    };
+
+    const m = cleanP(modality);
+    const bp = cleanP(bodyPart);
+    const g = cleanP(gender);
 
     const r = await pool.query(
       `
-      SELECT id, name, content
+      SELECT id, name, content, modality, body_part, gender
       FROM report_templates
       WHERE is_active = true
         AND ($1::text IS NULL OR modality = $1)
-        AND ($2::text IS NULL OR body_part = $2)
-      ORDER BY body_part NULLS LAST, name
+        AND ($2::text IS NULL OR body_part ILIKE $2)
+        AND (
+             ($3::text IS NULL) OR               -- No gender specified
+             (gender IS NULL) OR                 -- Template applies to all
+             (gender = $3)                       -- Exact match
+            )
+      ORDER BY 
+        CASE WHEN body_part IS NOT NULL AND gender IS NOT NULL THEN 1
+             WHEN body_part IS NOT NULL THEN 2
+             WHEN gender IS NOT NULL THEN 3
+             ELSE 4
+        END,
+        name
       `,
-      [modality || null, bodyPart || null]
+      [m, bp, g]
     );
 
     res.json({ success: true, data: r.rows });

@@ -18,13 +18,29 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { name, ae_title, ip_address, port, description } = req.body;
+        console.log("[DEBUG] Creating Modality:", req.body);
+
         // validation
         if (!name || !ae_title || !ip_address) {
+            console.error("[DEBUG] Missing fields:", req.body);
             return res.status(400).json({ success: false, message: "Missing required fields" });
         }
 
-        const q = `INSERT INTO modalities (name, ae_title, ip_address, port, description) VALUES ($1, $2, $3, $4, $5) RETURNING *`;
-        const r = await pool.query(q, [name, ae_title, ip_address, port || 104, description || '']);
+        // Force variables to string/int to avoid undefined issues
+        const pPort = parseInt(port) || 104;
+        const pDesc = description || '';
+
+        const q = `
+            INSERT INTO modalities (name, ae_title, ip_address, port, description) 
+            VALUES ($1, $2, $3, $4, $5) 
+            RETURNING *
+        `;
+        const params = [name, ae_title, ip_address, pPort, pDesc];
+        console.log("[DEBUG] Executing Query:", q);
+        console.log("[DEBUG] With Params:", params);
+
+        const r = await pool.query(q, params);
+        console.log("[DEBUG] Inserted Row:", r.rows[0]);
 
         // Also update server whitelist if we were filtering...
         // require('../services/mwlServer').updateWhitelist(); 
