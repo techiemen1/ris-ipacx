@@ -89,6 +89,10 @@ exports.login = async (req, res) => {
         role_id: user.role_id,
         role: roleName,
         profile_picture: user.profile_picture,
+        can_report: user.can_report,
+        can_sign: user.can_sign,
+        can_order: user.can_order,
+        can_schedule: user.can_schedule,
       },
     });
   } catch (err) {
@@ -235,6 +239,10 @@ exports.profile = async (req, res) => {
       full_name: user.full_name,
       role: roleName,
       profile_picture: user.profile_picture,
+      can_report: user.can_report,
+      can_sign: user.can_sign,
+      can_order: user.can_order,
+      can_schedule: user.can_schedule,
     });
   } catch (err) {
     console.error("Profile fetch error:", err);

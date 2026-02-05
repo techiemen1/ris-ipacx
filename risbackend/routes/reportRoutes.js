@@ -104,7 +104,7 @@ const { verifyToken, authorize } = require("../middleware/authMiddleware");
 router.delete(
   "/study/:studyUID",
   verifyToken,
-  authorize(["admin"]),
+  authorize(["admin", "Admin", "administrator", "Administrator"]),
   audit("DELETE", "REPORT"),
   reportController.deleteReport
 );

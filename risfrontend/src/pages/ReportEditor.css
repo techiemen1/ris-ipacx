@@ -94,6 +94,17 @@ table.main-table {
   display: none !important;
 }
 
+/* Force Print View for HTML2PDF capture */
+.force-print-view .only-print {
+  display: inline-block !important;
+}
+
+.force-print-view .no-print,
+.force-print-view input,
+.force-print-view textarea {
+  display: none !important;
+}
+
 @media print {
   @page {
     size: A4;
@@ -158,9 +169,12 @@ table.main-table {
     right: 0px;
     background: white;
     z-index: 9999;
-    padding-bottom: 5mm;
+    padding-bottom: 8mm;
+    /* More breathing room at bottom */
     width: 100%;
     box-sizing: border-box;
+    border-top: 0.5pt solid black !important;
+    /* Thinner footer separator */
   }
 
   /* Space Reservation */
@@ -169,8 +183,8 @@ table.main-table {
   }
 
   .footer-spacer {
-    height: 10mm;
-    /* Reduced spacer to prevent pushing to next page */
+    height: 15mm;
+    /* Increase spacer to prevent overlap */
     visibility: hidden;
   }
 
@@ -257,7 +271,12 @@ table.main-table {
   /* Universal Border Intensity - ONLY for patient card */
   .patient-card-table,
   .patient-card-table td {
-    border: 1pt solid black !important;
+    border: 1px solid black !important;
+    /* Standard 1px for crisp print */
+  }
+
+  .patient-card-table td {
+    border: 0.5pt solid black !important;
   }
 
   .main-table,
@@ -284,46 +303,138 @@ table.main-table {
     display: flex !important;
     justify-content: center;
     align-items: center;
-    gap: 12px;
+    gap: 20px !important;
+    /* Balanced gap */
+  }
+
+  .contact-line svg {
+    margin-right: 6px;
+    /* Explicit icon spacing */
+    color: #000 !important;
+    fill: currentColor;
   }
 
   /* Static Print Values */
   .print-val {
     display: inline-block !important;
-    font-weight: 800 !important;
+    font-weight: 600 !important;
+    /* Better depth */
     color: black !important;
     font-size: 11pt !important;
-    line-height: 1.2 !important;
+    line-height: 1.3 !important;
   }
 
   /* Professional Pinned Footer - Pushed DOWN */
   .footer-container {
     position: fixed;
-    bottom: 5mm;
-    /* Pushed down */
-    left: 10mm;
-    right: 10mm;
-    padding-top: 10px !important;
-    border-top: none !important;
-    page-break-inside: avoid !important;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    padding: 2mm 10mm 4mm 10mm;
+    /* Safe print margins */
     background: white;
+    z-index: 9999;
+    border-top: 1px solid black !important;
+  }
+
+  /* Footer Elements */
+  .footer-content {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    gap: 3mm !important;
+  }
+
+  .footer-address {
+    font-size: 9pt !important;
+    font-weight: 700 !important;
+    color: #000 !important;
+    text-transform: uppercase;
+    margin: 0 !important;
+    line-height: 1.2 !important;
+  }
+
+  .footer-contacts {
+    display: flex !important;
+    gap: 6mm !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 8pt !important;
+    color: #000 !important;
+  }
+
+  .footer-contacts svg {
+    width: 3mm !important;
+    height: 3mm !important;
+    fill: black !important;
+    margin-right: 1.5mm !important;
+  }
+
+  .page-number-container {
+    position: absolute;
+    right: 10mm;
+    bottom: 4mm;
+    font-size: 8pt !important;
+    font-weight: 600 !important;
+    color: #000 !important;
   }
 
   /* Ensure main content doesn't overlap with fixed footer */
   .main-table {
-    margin-bottom: 5mm;
+    margin-bottom: 35mm;
+    /* Increased safety margin */
   }
 
   /* Page Counter in Print */
   body {
     counter-reset: page;
+    color: #000 !important;
+    /* Force #000 globally for print */
   }
 
-  .page-number::after {
+  .page-number-container::after {
     counter-increment: page;
     content: "Page " counter(page);
-    font-weight: 700;
-    color: #4f46e5;
+  }
+
+  /* LIST FIXES - Prevent displacement */
+  .ProseMirror ol {
+    list-style-type: decimal !important;
+    padding-left: 1.25em !important;
+    margin-left: 0.25em !important;
+  }
+
+  .ProseMirror ul {
+    list-style-type: disc !important;
+    padding-left: 1.25em !important;
+    margin-left: 0.25em !important;
+  }
+
+  .ProseMirror li {
+    padding-left: 0.5em !important;
+    margin-bottom: 0.25em !important;
+  }
+
+  /* Patient Demographics Borders - FORCE VISIBILITY */
+  .patient-card-table {
+    border: 1px solid #000 !important;
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  .patient-card-table td {
+    border: 1px solid #000 !important;
+    color: #000 !important;
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* Hospital Name - Consistent Size */
+  h1.only-print {
+    font-size: 24pt !important;
+    line-height: 1.2 !important;
+    margin-bottom: 8mm !important;
   }
 }
 
@@ -331,6 +442,38 @@ table.main-table {
   outline: none;
   font-size: 11pt;
   line-height: 1.6;
+}
+
+@media print {
+  .ProseMirror {
+    text-align: justify !important;
+    font-size: 11pt !important;
+    color: #000000 !important;
+    /* Maximum Depth */
+    font-weight: 500 !important;
+  }
+
+  .ProseMirror p {
+    margin-bottom: 0.75em !important;
+  }
+
+  /* Fix header overlap - Removed conflicting negative impacts, added positive spacing */
+  .text-3xl.only-print {
+    margin-bottom: 1.5rem !important;
+    /* Enforce 24px gap */
+    display: block !important;
+  }
+
+  /* Fix Footer Symbols Overlap */
+  .contact-line.only-print {
+    gap: 25px !important;
+    /* More space between items */
+  }
+
+  .contact-line svg {
+    margin-right: 4px;
+    /* Space between icon and text */
+  }
 }
 
 .ProseMirror p {
@@ -569,18 +712,23 @@ table.main-table {
   z-index: -1;
 }
 
-/* 3. Boxed Table - Premium Grid Look */
+/* Patient Card Grid - Fix Overlap & Premium Look */
 .patient-card-table {
   width: 100%;
   border-collapse: collapse;
   margin-bottom: 0.5rem;
-  border: 1.5pt solid black !important;
+  border: 0.75pt solid black !important;
+  /* Thinner outer border */
 }
 
 .patient-card-table td {
-  border: 1pt solid black !important;
-  padding: 3px 4px;
+  border: 0.5pt solid black !important;
+  /* Thinner inner border */
+  padding: 4px 6px;
+  /* Balanced padding */
   vertical-align: middle;
+  font-size: 10pt;
+  /* Slightly smaller for elegance */
 }
 
 /* PRIORS TIMELINE */

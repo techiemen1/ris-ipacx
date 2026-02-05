@@ -465,6 +465,7 @@ export default function ReportEditor({
 
     // Remove scaling classes temporarily to ensure 1:1 capture without offsets
     element.classList.remove('scale-[0.9]', 'md:scale-100', 'transform', 'origin-top');
+    element.classList.add('force-print-view'); // FORCE PRINT VISIBILITY
     element.style.transform = 'none'; // Force reset
     element.style.margin = '0 auto';  // Center
     element.style.backgroundColor = '#ffffff'; // Ensure white background
@@ -577,9 +578,16 @@ export default function ReportEditor({
 
     const finalStatus = statusOverride || status;
 
-    if (finalStatus === 'final' && !disclaimerAccepted) {
-      toast.error("You must accept the legal disclaimer to sign this report.");
-      return;
+    if (finalStatus === 'final') {
+      const canSign = currentUser?.can_sign || currentUser?.role === 'admin';
+      if (!canSign) {
+        toast.error("You are not authorized to digitally sign reports.");
+        return;
+      }
+      if (!disclaimerAccepted) {
+        toast.error("You must accept the legal disclaimer to sign this report.");
+        return;
+      }
     }
 
     const html = editor.getHTML();
@@ -800,7 +808,7 @@ export default function ReportEditor({
                     <tr><td>
                       <div className="text-center mb-0 mt-0">
                         <input className="field-input-reset text-center text-3xl font-bold text-slate-900 uppercase tracking-widest font-serif-premium w-full bg-transparent placeholder-slate-300 focus:placeholder-transparent no-print" value={orgSettings.name || ""} onChange={e => setOrgSettings(prev => ({ ...prev, name: e.target.value }))} placeholder="HOSPITAL NAME" />
-                        <h1 className="text-3xl font-bold text-slate-900 uppercase tracking-widest font-serif-premium only-print mb-1 mt-1">{orgSettings.name || "CAPRICORN HOSPITALS"}</h1>
+                        <h1 className="text-3xl font-bold text-black uppercase tracking-widest font-serif-premium only-print mb-8 mt-2">{orgSettings.name || "CAPRICORN HOSPITALS"}</h1>
                       </div>
                       <div className="flex justify-between items-center px-1 mb-1 no-print">
                         <div className="flex items-center gap-2">
@@ -877,17 +885,20 @@ export default function ReportEditor({
                   </td></tr></tbody>
                   <tfoot><tr><td><div className="footer-spacer h-[25mm] invisible" /></td></tr></tfoot>
                 </table>
-                <div className="fixed-footer-stripe text-center border-t-2 border-slate-900 pt-1 mt-auto bg-white z-[999]">
-                  <p className="text-sm font-bold uppercase text-slate-800 tracking-wide mb-1 leading-tight">{orgSettings.address || "#1, BANGALORE OUTER RING ROAD, HEBBAL, BANGALORE, 560031"}</p>
-                  <div className="contact-line flex justify-center items-center gap-4 py-1">
-                    <div className="flex items-center gap-1"><Phone size={11} className="text-slate-900 fill-current" /><span>{orgSettings.enquiryPhone || "+91 9886617662"}</span></div>
-                    <span className="text-slate-300">|</span>
-                    <div className="flex items-center gap-1 text-red-600"><Siren size={11} className="fill-current" /><span>{orgSettings.contactPhone || "+91 9886517662"}</span></div>
-                    <span className="text-slate-300">|</span>
-                    <div className="flex items-center gap-1"><Mail size={11} className="text-sky-500 fill-current" /><span>{orgSettings.email || "radiology@hospital.com"}</span></div>
-                    <span className="text-slate-300">|</span>
-                    <div className="flex items-center gap-1 italic opacity-60"><Globe size={11} className="text-blue-700" /><span>{orgSettings.website || "www.hospital.com"}</span></div>
+                <div className="footer-container only-print">
+                  <div className="footer-content">
+                    <p className="footer-address">{orgSettings.address || "#1, BANGALORE OUTER RING ROAD, HEBBAL, BANGALORE, 560031"}</p>
+                    <div className="footer-contacts">
+                      <div className="flex items-center"><Phone /><span>{orgSettings.enquiryPhone || "+91 9886617662"}</span></div>
+                      <span>|</span>
+                      <div className="flex items-center"><Siren /><span>{orgSettings.contactPhone || "+91 9886517662"}</span></div>
+                      <span>|</span>
+                      <div className="flex items-center"><Mail /><span>{orgSettings.email || "radiology@hospital.com"}</span></div>
+                      <span>|</span>
+                      <div className="flex items-center"><Globe /><span>{orgSettings.website || "www.hospital.com"}</span></div>
+                    </div>
                   </div>
+                  <div className="page-number-container"></div>
                 </div>
               </div>
             )}
@@ -1034,18 +1045,22 @@ export default function ReportEditor({
 
                 <div className="flex flex-col gap-2 p-3 bg-amber-50 border border-amber-100 rounded-xl">
                   <h4 className="text-[10px] font-bold uppercase text-amber-700 tracking-widest flex items-center gap-1"><Lock size={10} /> Legal Certification</h4>
-                  <label className="flex items-start gap-2 text-[10px] text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={disclaimerAccepted}
-                      onChange={e => setDisclaimerAccepted(e.target.checked)}
-                      disabled={status === 'final'}
-                    />
-                    <span className="leading-tight">
-                      I, <b>{currentUser?.full_name || "the undersigned"}</b>, hereby certify that I have personally reviewed the images and this report is an accurate interpretation of the findings. I affix my digital signature to this document.
-                    </span>
-                  </label>
+                  {(!currentUser?.can_sign && currentUser?.role !== 'admin') ? (
+                    <div className="text-[10px] text-red-500 font-bold italic">You are not authorized to digitally sign reports.</div>
+                  ) : (
+                    <label className="flex items-start gap-2 text-[10px] text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={disclaimerAccepted}
+                        onChange={e => setDisclaimerAccepted(e.target.checked)}
+                        disabled={status === 'final'}
+                      />
+                      <span className="leading-tight">
+                        I, <b>{currentUser?.full_name || "the undersigned"}</b>, hereby certify that I have personally reviewed the images and this report is an accurate interpretation of the findings. I affix my digital signature to this document.
+                      </span>
+                    </label>
+                  )}
                 </div>
 
                 <div className="flex gap-2">
@@ -1057,15 +1072,17 @@ export default function ReportEditor({
                   >
                     Save Draft
                   </Button>
-                  <Button
-                    disabled={isSaving || status === 'final' || (!disclaimerAccepted && status !== 'final')}
-                    onClick={() => {
-                      handleSave("final");
-                    }}
-                    className={`flex-1 h-11 rounded-xl font-bold text-xs uppercase tracking-widest text-white shadow-lg transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed`}
-                  >
-                    Sign & Finalize
-                  </Button>
+                  {(currentUser?.can_sign || currentUser?.role === 'admin') && (
+                    <Button
+                      disabled={isSaving || status === 'final' || (!disclaimerAccepted && status !== 'final')}
+                      onClick={() => {
+                        handleSave("final");
+                      }}
+                      className={`flex-1 h-11 rounded-xl font-bold text-xs uppercase tracking-widest text-white shadow-lg transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed`}
+                    >
+                      Sign & Finalize
+                    </Button>
+                  )}
                 </div>
 
 

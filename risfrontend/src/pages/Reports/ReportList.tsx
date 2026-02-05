@@ -51,7 +51,8 @@ export default function ReportList(): React.ReactElement {
 
   const navigate = useNavigate();
   const { user } = useRBAC();
-  const isAdmin = user?.role === "admin";
+  const role = (user?.role || "").toLowerCase();
+  const isAdmin = role === "admin" || role === "administrator";
 
   // Load Reports
   const load = useCallback(async () => {
@@ -118,10 +119,11 @@ export default function ReportList(): React.ReactElement {
 
     try {
       await axiosInstance.delete(`/reports/study/${row.studyUID}`);
-      // toast.success("Report deleted");
+      alert("Report deleted successfully.");
       setList(prev => prev.filter(r => r.studyUID !== row.studyUID));
-    } catch (err) {
+    } catch (err: any) {
       console.error("delete error", err);
+      alert("Failed to delete report: " + (err.response?.data?.message || err.message || "Unknown error"));
     }
   };
 

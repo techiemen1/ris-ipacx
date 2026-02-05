@@ -7,6 +7,9 @@ const path = require("path");
 //
 // 🚀 Get all users
 //
+//
+// 🚀 Get all users
+//
 exports.getUsers = async (req, res) => {
   try {
     const result = await pool.query(
@@ -51,6 +54,7 @@ exports.createUser = async (req, res) => {
       specialty,
       department,
       is_active,
+      // Removed non-existent permission columns
     } = req.body;
 
     if (!username || !email || !password)
@@ -58,7 +62,6 @@ exports.createUser = async (req, res) => {
 
     // Validate allowed roles
     const validRoles = ["admin", "technician", "radiologist", "receptionist", "doctor", "nurse", "staff"];
-    //    const validRoles = ["admin", "technician", "radiologist", "receptionist"];
     if (!validRoles.includes(role))
       return res.status(400).json({ error: "Invalid role" });
 
@@ -92,7 +95,7 @@ exports.createUser = async (req, res) => {
         specialty,
         department,
         is_active ?? true,
-        req.user?.username || "system",
+        req.user?.username || "system"
       ]
     );
 

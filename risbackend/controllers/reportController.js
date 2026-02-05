@@ -233,10 +233,12 @@ exports.finalizeReport = async (req, res) => {
   const userRole = req.user.role;
 
   try {
-    // 1. Role Enforcement: Only Radiologists (and Admins for override) can sign
-    // 'doctor' role is often used for referring physicians, so be specific to 'radiologist'
-    if (userRole !== 'radiologist' && userRole !== 'admin') {
-      return res.status(403).json({ success: false, message: "Only Radiologists can finalize reports." });
+    // 1. Role Enforcement: Only Radiologists/Admin OR Users with explicit 'can_sign' permission
+    // We allow admins or anyone with can_sign=true
+    const canSign = req.user.can_sign === true || req.user.role === 'admin';
+
+    if (!canSign) {
+      return res.status(403).json({ success: false, message: "You are not authorized to digitally sign reports." });
     }
 
     // 2. Legal Consent Check
@@ -253,8 +255,13 @@ exports.finalizeReport = async (req, res) => {
     if (userResult.rowCount === 0) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
-
     const user = userResult.rows[0];
+
+    // Ensure they have a signature uploaded if they are trying to sign
+    // (Optional: strict enforcement)
+    if (!user.signature_path) {
+      return res.status(400).json({ success: false, message: "No digital signature uploaded. Please update your profile." });
+    }
 
     // 4. Check for existing Final status (Immutability Check)
     const statusCheck = await pool.query("SELECT status FROM pacs_reports WHERE study_instance_uid = $1", [studyUID]);
@@ -269,9 +276,34 @@ exports.finalizeReport = async (req, res) => {
       const sigUrl = `/api${user.signature_path}`;
       const dateStr = new Date().toLocaleString("en-IN", { dateStyle: "long", timeStyle: "short" });
 
+      // Check for dual signature (Resident Report -> Consultant Sign)
+      let dualSigBlock = "";
+
+      // We check if the report was created by someone else (e.g. resident/junior)
+      // We need to fetch the creator's details if they are different from the signer
+      const reportMeta = await pool.query("SELECT created_by FROM pacs_reports WHERE study_instance_uid = $1", [studyUID]);
+
+      if (reportMeta.rowCount > 0 && reportMeta.rows[0].created_by && reportMeta.rows[0].created_by !== userId) {
+        const creatorResult = await pool.query(
+          "SELECT full_name, designation FROM users WHERE id = $1",
+          [reportMeta.rows[0].created_by]
+        );
+
+        if (creatorResult.rowCount > 0) {
+          const creator = creatorResult.rows[0];
+          dualSigBlock = `
+            <div style="margin-bottom: 15px; text-align: right; font-size: 12px; color: #333;">
+              <span style="font-weight: bold;">Reported by:</span> ${creator.full_name}
+              ${creator.designation ? `<br/><span style="font-size: 10px; color: #666;">(${creator.designation})</span>` : ""}
+            </div>
+          `;
+        }
+      }
+
       const signatureBlock = `
         <div class="report-signature-block" style="margin-top: 40px; page-break-inside: avoid;">
           <div style="display: flex; flex-direction: column; align-items: flex-end; text-align: right;">
+            ${dualSigBlock}
             <div style="width: 200px; text-align: center;">
               <img src="${sigUrl}" alt="Digital Signature" style="height: 60px; max-width: 150px; object-fit: contain; margin-bottom: 5px;" />
               <div style="font-weight: bold; font-family: sans-serif; font-size: 14px; text-transform: uppercase;">${user.full_name}</div>
@@ -335,6 +367,9 @@ exports.finalizeReport = async (req, res) => {
 /* =========================================================
    ADDENDA (LEGAL REQUIREMENT)
 ========================================================= */
+/* =========================================================
+   ADDENDA (LEGAL REQUIREMENT)
+========================================================= */
 exports.getAddenda = async (req, res) => {
   const { studyUID } = req.params;
 
@@ -343,7 +378,7 @@ exports.getAddenda = async (req, res) => {
       `
       SELECT id, content, created_at, created_by
       FROM report_addenda
-      WHERE study_uid = $1
+      WHERE report_id = (SELECT id FROM pacs_reports WHERE study_instance_uid = $1)
       ORDER BY created_at
       `,
       [studyUID]
@@ -360,12 +395,20 @@ exports.addAddendum = async (req, res) => {
   const { studyUID, content } = req.body;
 
   try {
+    // 1. Get Report ID from StudyUID
+    const r = await pool.query("SELECT id FROM pacs_reports WHERE study_instance_uid = $1", [studyUID]);
+    if (r.rowCount === 0) {
+      return res.status(404).json({ success: false, message: "Report not found" });
+    }
+    const reportId = r.rows[0].id;
+
+    // 2. Insert Addendum
     await pool.query(
       `
-      INSERT INTO report_addenda (study_uid, content, created_by)
+      INSERT INTO report_addenda (report_id, content, created_by)
       VALUES ($1,$2,$3)
       `,
-      [studyUID, content, req.user.id]
+      [reportId, content, req.user.id]
     );
 
     res.json({ success: true });
@@ -385,18 +428,26 @@ exports.deleteReport = async (req, res) => {
     // Delete from both potential report tables and related data
     await pool.query("BEGIN");
 
-    // 1. Delete from pacs_reports (Main table for PACS-based reporting)
+    // 1. Delete Addenda first (Foreign Key Constraint)
+    // We must find the reports that are about to be deleted
+    await pool.query(`
+      DELETE FROM report_addenda 
+      WHERE report_id IN (
+        SELECT id FROM pacs_reports WHERE study_instance_uid = $1
+      )
+    `, [studyUID]);
+
+    // 2. Delete Key Images
+    await pool.query("DELETE FROM pacs_report_images WHERE study_instance_uid = $1", [studyUID]);
+
+    // 3. Delete from pacs_reports (Main table)
     await pool.query("DELETE FROM pacs_reports WHERE study_instance_uid = $1", [studyUID]);
 
-    // 2. Delete from legacy/RIS reports table (linked via worklist)
+    // 4. Delete from legacy/RIS reports table (linked via worklist)
     await pool.query(`
       DELETE FROM reports 
       WHERE worklist_id IN (SELECT id FROM worklist WHERE study_instance_uid = $1)
     `, [studyUID]);
-
-    // 3. Related tables
-    await pool.query("DELETE FROM pacs_report_images WHERE study_instance_uid = $1", [studyUID]);
-    await pool.query("DELETE FROM report_addenda WHERE study_uid = $1", [studyUID]);
 
     await pool.query("COMMIT");
 

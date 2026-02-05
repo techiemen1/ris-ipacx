@@ -17,6 +17,8 @@ type User = {
   employee_id?: string;
   profile_picture?: string;
   is_active?: boolean;
+  can_sign?: boolean;
+  can_report?: boolean;
 };
 
 const defaultForm = {
@@ -40,6 +42,7 @@ const defaultForm = {
   can_report: false,
   can_schedule: false,
   is_active: true,
+  can_sign: false,
 };
 
 const UserManagement: React.FC = () => {
@@ -114,6 +117,7 @@ const UserManagement: React.FC = () => {
         timezone: form.timezone || null,
         can_order: Boolean(form.can_order),
         can_report: Boolean(form.can_report),
+        can_sign: Boolean((form as any).can_sign),
         can_schedule: Boolean(form.can_schedule),
         is_active: Boolean(form.is_active),
         designation: (form as any).designation || null,
@@ -299,6 +303,10 @@ const UserManagement: React.FC = () => {
                 Can Report
               </label>
               <label className="flex items-center gap-2 border p-2 rounded hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" checked={(form as any).can_sign} onChange={(e) => setForm({ ...form, can_sign: e.target.checked } as any)} />
+                Can Sign
+              </label>
+              <label className="flex items-center gap-2 border p-2 rounded hover:bg-gray-50 cursor-pointer">
                 <input type="checkbox" checked={form.can_schedule} onChange={(e) => setForm({ ...form, can_schedule: e.target.checked })} />
                 Can Schedule
               </label>
@@ -352,6 +360,7 @@ const UserManagement: React.FC = () => {
                   <th className="border px-2 py-1">Username</th>
                   <th className="border px-2 py-1">Details</th>
                   <th className="border px-2 py-1">Role / Dept</th>
+                  <th className="border px-2 py-1 text-xs">Perms</th>
                   <th className="border px-2 py-1">Signature</th>
                   <th className="border px-2 py-1">Status</th>
                   <th className="border px-2 py-1">Actions</th>
@@ -375,6 +384,10 @@ const UserManagement: React.FC = () => {
                     <td className="border px-2 py-1">
                       <div className="bg-slate-100 px-1 rounded inline-block text-xs font-mono">{u.role}</div>
                       <div className="text-xs text-gray-400">{(u as any).department || '-'}</div>
+                    </td>
+                    <td className="border px-2 py-1 text-xs text-center">
+                      {(u as any).can_sign && <span title="Can Sign" className="bg-green-100 text-green-800 px-1 rounded mr-1">✍️</span>}
+                      {(u as any).can_report && <span title="Can Report" className="bg-blue-100 text-blue-800 px-1 rounded">📄</span>}
                     </td>
                     <td className="border px-2 py-1 text-center">
                       {(u as any).signature_path ? <span title="Signature Uploaded">✅</span> : <span className="text-gray-300" title="No Signature">❌</span>}

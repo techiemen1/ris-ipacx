@@ -10,9 +10,9 @@ const jwt = require("jsonwebtoken");
 
 const JWT_SECRET = process.env.JWT_SECRET || "supersecretkey";
 
-// DEPRECATED: Use authMiddleware.js instead
+// DEPRECATED: Use authMiddleware.js instead - Kept for backward compatibility
 module.exports = function auth(req, res, next) {
-  console.warn("Using deprecated auth middleware!");
+  // console.warn("Using deprecated auth middleware!"); // Suppressed
   try {
     const authHeader = req.headers.authorization;
 

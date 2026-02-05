@@ -13,16 +13,22 @@ exports.createUser = async (user) => {
     profile_picture,
     role,
     created_by,
+    can_report,
+    can_sign,
+    can_order,
+    can_schedule,
   } = user;
 
   const result = await pool.query(
     `INSERT INTO users (
        username, password_hash, full_name, email, phone_number, specialty,
-       department, profile_picture, role, created_by, created_at
+       department, profile_picture, role, created_by, created_at,
+       can_report, can_sign, can_order, can_schedule
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(), $11, $12, $13, $14)
      RETURNING id, username, role, full_name, email, phone_number,
-               specialty, department, profile_picture, is_active, created_at`,
+               specialty, department, profile_picture, is_active, created_at,
+               can_report, can_sign, can_order, can_schedule`,
     [
       username,
       password_hash,
@@ -34,6 +40,10 @@ exports.createUser = async (user) => {
       profile_picture,
       role,
       created_by,
+      can_report || false,
+      can_sign || false,
+      can_order || false,
+      can_schedule || false,
     ]
   );
 
@@ -43,7 +53,8 @@ exports.createUser = async (user) => {
 exports.getUsers = async (limit = 50, offset = 0) => {
   const res = await pool.query(
     `SELECT id, username, role, full_name, email, phone_number,
-            specialty, department, profile_picture, is_active
+            specialty, department, profile_picture, is_active,
+            can_report, can_sign, can_order, can_schedule
      FROM users
      ORDER BY id DESC
      LIMIT $1 OFFSET $2`,
@@ -73,6 +84,10 @@ exports.updateUser = async (id, fields) => {
     "role",
     "is_active",
     "updated_by",
+    "can_report",
+    "can_sign",
+    "can_order",
+    "can_schedule",
   ];
 
   const keys = Object.keys(fields).filter((k) => allowed.includes(k));
@@ -85,7 +100,7 @@ exports.updateUser = async (id, fields) => {
   const res = await pool.query(
     `UPDATE users SET ${setClause}, updated_at=NOW()
      WHERE id=$${values.length}
-     RETURNING id, username, role, full_name, email, phone_number, specialty, department, is_active`,
+     RETURNING id, username, role, full_name, email, phone_number, specialty, department, is_active, can_report, can_sign, can_order, can_schedule`,
     values
   );
   return res.rows[0];

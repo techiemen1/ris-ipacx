@@ -17,19 +17,24 @@ function buildAuthHeader(pacs) {
   return {};
 }
 
+function getDicomWebCandidates(base) {
+  return [
+    `${base}/qido/studies`,
+    `${base}/dicom-web/studies`, // Common for Orthanc
+    `${base}/dcm4chee-arc/rs/studies`,
+    `${base}/studies`,
+    `${base}/dicom-web/qido/studies`,
+    `${base}/orthanc/dicom-web/studies` // Just in case
+  ];
+}
+
 async function qidoStudies(pacs, opts = {}) {
   if (!pacs) throw new Error('Missing PACS config');
   const baseCandidate = pacs.base_url || `${pacs.host}:${pacs.port}`;
   const base = normalizeBase(baseCandidate);
   if (!base) throw new Error('Invalid PACS base URL');
 
-  const candidates = [
-    `${base}/qido/studies`,
-    `${base}/dcm4chee-arc/rs/studies`,
-    `${base}/dicom-web/studies`,
-    `${base}/studies`,
-    `${base}/dicom-web/qido/studies`
-  ];
+  const candidates = getDicomWebCandidates(base);
 
   const headers = buildAuthHeader(pacs);
   const timeout = opts.timeout || 15000;
@@ -187,64 +192,75 @@ async function getDeepMetadata(pacs, studyUID) {
 
     console.log(`📡 [DeepMeta] Starting scrape for ${studyUID}`);
 
+    const candidates = getDicomWebCandidates(base);
+    let successfulCandidate = null;
+
     // ============================================
-    // LAYER 1: Study Level Tags (Fastest)
+    // LAYER 1: Study Level Tags (Fastest) & Path Discovery
     // ============================================
-    try {
-      const studyUrl = `${base}/studies`;
-      const res = await axios.get(studyUrl, {
-        headers,
-        params: {
-          StudyInstanceUID: studyUID,
-          includefield: Object.values(TAG_MAP).concat(['00080061']) // All tags + ModalitiesInStudy
-        },
-        timeout: 5000
-      });
-      const study = Array.isArray(res.data) ? res.data[0] : (res.data?.data?.[0] || null);
+    for (const urlBase of candidates) {
+      try {
+        const res = await axios.get(urlBase, {
+          headers,
+          params: {
+            StudyInstanceUID: studyUID,
+            includefield: Object.values(TAG_MAP).concat(['00080061'])
+          },
+          timeout: 5000
+        });
 
-      if (study) {
-        // 1. Fill everything we can find directly
-        fillMissing(study);
+        // If we get a 200/204, even if empty, this endpoint likely exists
+        if (res.status === 200 || res.status === 204) {
+          successfulCandidate = urlBase; // Found working endpoint
+          const study = Array.isArray(res.data) ? res.data[0] : (res.data?.data?.[0] || null);
 
-        // 2. Special Logic for Modality (Preferred Strong)
-        const modsInStudyRaw = getValue(study, '00080061');
-        const modsList = parseModalitiesInStudy(modsInStudyRaw);
-
-        const strongMod = modsList.find(m => isImageModality(m));
-        if (strongMod) {
-          finalData.modality = strongMod; // Override with strong
-        } else if (modsList.length > 0 && !finalData.modality) {
-          finalData.modality = modsList[0];
+          if (study) {
+            fillMissing(study);
+            // ... Modality Logic ...
+            const modsInStudyRaw = getValue(study, '00080061');
+            const modsList = parseModalitiesInStudy(modsInStudyRaw);
+            const strongMod = modsList.find(m => isImageModality(m));
+            if (strongMod) finalData.modality = strongMod;
+            else if (modsList.length > 0 && !finalData.modality) finalData.modality = modsList[0];
+          }
+          break; // Stop looking for candidates
         }
+      } catch (err) {
+        // specific error handling if needed, otherwise try next candidate
       }
-    } catch (err) {
-      console.warn("Layer 1 Study Level failed:", err.message);
+    }
+
+    if (!successfulCandidate) {
+      console.warn(`[DeepMeta] Could not connect to any DICOMWeb endpoint for ${studyUID}`);
+      // Fallback: assume standard base if all failed, might trigger 404s in next layers but worth a shot?
+      // actually if layer 1 failed everywhere, layer 2/3 will mostly likely fail too.
+      // But let's set a default for try
+      successfulCandidate = `${base}/studies`;
     }
 
     // ============================================
-    // LAYER 2: Series Scan (If key fields missing or weak modality)
+    // LAYER 2: Series Scan
     // ============================================
-    // Check if we are missing ANY critical keys (except maybe Institution which varies)
     const missingCritical = !finalData.patientID || !finalData.accessionNumber || !finalData.bodyPartExamined;
     const weakModality = finalData.modality && !isImageModality(finalData.modality);
 
     if (missingCritical || !finalData.modality || weakModality) {
       console.log("🔄 [DeepMeta] Layer 1 incomplete. Trying Layer 2 (Series Scan)...");
       try {
-        const seriesUrl = `${base}/studies/${studyUID}/series`;
+        // Construct Series URL based on successful candidate
+        // Candidate: .../studies
+        // Series: .../studies/{uid}/series
+        const seriesUrl = `${successfulCandidate}/${studyUID}/series`;
+
         const seriesRes = await axios.get(seriesUrl, {
           headers,
-          // Request all tags that might be at series level (Modality, BodyPart, maybe others depending on PACS)
           params: { includefield: ['00080060', '00180015', '00080050', '0020000E'] },
           timeout: 6000
         });
         const seriesList = Array.isArray(seriesRes.data) ? seriesRes.data : [];
 
         for (const ser of seriesList) {
-          // Opportunistically fill missing BodyPart or Accession if present on Series
           fillMissing(ser);
-
-          // Modality Hunt: Look for Strong
           const m = getValue(ser, '00080060');
           if (m && isImageModality(m)) {
             finalData.modality = m;
@@ -252,8 +268,6 @@ async function getDeepMetadata(pacs, studyUID) {
             break;
           }
         }
-
-        // Fallback for Modality if still empty
         if (!finalData.modality && seriesList.length > 0) {
           finalData.modality = getValue(seriesList[0], '00080060');
         }
@@ -263,36 +277,26 @@ async function getDeepMetadata(pacs, studyUID) {
     }
 
     // ============================================
-    // LAYER 3: Instance/Metadata (Heavy Dump - Gold Standard for missing tags)
+    // LAYER 3: Instance/Metadata
     // ============================================
-    // Re-evaluate missing keys
     const stillMissingCritical = !finalData.patientID || !finalData.accessionNumber || !finalData.bodyPartExamined || !finalData.referringPhysician;
     const stillWeakModality = finalData.modality && !isImageModality(finalData.modality);
 
     if (stillMissingCritical || !finalData.modality || stillWeakModality) {
       try {
         console.log("🔄 [DeepMeta] Still missing data. Trying Layer 3 (Instance Dump)...");
-        const qidoUrl = `${base}/studies/${studyUID}/instances`;
+        // .../studies/{uid}/instances
+        const qidoUrl = `${successfulCandidate}/${studyUID}/instances`;
+
         const res = await axios.get(qidoUrl, {
           headers,
-          params: {
-            limit: 1,
-            includefield: Object.values(TAG_MAP) // Request EVERYTHING
-          },
+          params: { limit: 1, includefield: Object.values(TAG_MAP) },
           timeout: 5000
         });
 
         const instance = Array.isArray(res.data) ? res.data[0] : null;
         if (instance) {
           fillMissing(instance);
-
-          // Modality specific override: If we have a weak one, and instance gives a strong one, take it.
-          // OR if instance gives a strong one and we have nothing.
-          // But wait, if instance is just one, it might be the SR instance.
-          // So we only override if what we have is WRONG/MISSING.
-          // Actually, usually 'instances' endpoint returns the *first* instance, which is random.
-          // But if we specifically want Modality, we trust our Layer 1/2 more for the *Study* modality unless they failed.
-
           const m = getValue(instance, '00080060');
           if (m && isImageModality(m) && (!finalData.modality || !isImageModality(finalData.modality))) {
             finalData.modality = m;
@@ -304,7 +308,7 @@ async function getDeepMetadata(pacs, studyUID) {
     }
 
     // ============================================
-    // LAYER 4: Study Description Heuristic (Last Resort)
+    // LAYER 4: Study Description Heuristic
     // ============================================
     if (!finalData.modality || !isImageModality(finalData.modality)) {
       try {
