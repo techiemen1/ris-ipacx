@@ -11,7 +11,7 @@ exports.getUsers = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, username, full_name, email, role, phone_number, specialty,
-              department, is_active, profile_picture, created_at, updated_at
+              department, is_active, profile_picture, designation, registration_number, signature_path, created_at, updated_at
        FROM users
        ORDER BY id DESC`
     );
@@ -58,7 +58,7 @@ exports.createUser = async (req, res) => {
 
     // Validate allowed roles
     const validRoles = ["admin", "technician", "radiologist", "receptionist", "doctor", "nurse", "staff"];
-//    const validRoles = ["admin", "technician", "radiologist", "receptionist"];
+    //    const validRoles = ["admin", "technician", "radiologist", "receptionist"];
     if (!validRoles.includes(role))
       return res.status(400).json({ error: "Invalid role" });
 
@@ -119,7 +119,17 @@ exports.updateUser = async (req, res) => {
       specialty,
       department,
       is_active,
+      designation,
+      registration_number
     } = req.body;
+
+    // Security: Only Admin or Self can update
+    const isSelf = req.user.id === parseInt(id);
+    const isAdmin = req.user.role === "admin";
+
+    if (!isSelf && !isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
 
     const existing = await pool.query("SELECT * FROM users WHERE id=$1", [id]);
     if (existing.rowCount === 0)
@@ -134,29 +144,40 @@ exports.updateUser = async (req, res) => {
         parseInt(process.env.PASSWORD_SALT_ROUNDS || "10", 10)
       );
 
-    // Validate role again
-//    const validRoles = ["admin", "technician", "radiologist", "receptionist"];
-     const validRoles = ["admin", "technician", "radiologist", "receptionist", "doctor", "nurse", "staff"];
+    // Hardening: Non-admins cannot change Role, Active Status, or Department
+    let newRole = current.role;
+    let newIsActive = current.is_active;
+    let newDepartment = current.department;
 
-    if (role && !validRoles.includes(role))
-      return res.status(400).json({ error: "Invalid role" });
+    if (isAdmin) {
+      const validRoles = ["admin", "technician", "radiologist", "receptionist", "doctor", "nurse", "staff"];
+      if (role && !validRoles.includes(role)) {
+        return res.status(400).json({ error: "Invalid role" });
+      }
+      newRole = role || current.role;
+      newIsActive = is_active ?? current.is_active;
+      newDepartment = department || current.department;
+    }
 
     await pool.query(
       `UPDATE users SET
         username=$1, full_name=$2, email=$3, password_hash=$4, role=$5,
         phone_number=$6, specialty=$7, department=$8, is_active=$9,
-        updated_at=NOW(), updated_by=$10
-      WHERE id=$11`,
+        designation=$10, registration_number=$11,
+        updated_at=NOW(), updated_by=$12
+      WHERE id=$13`,
       [
         username || current.username,
         full_name || current.full_name,
         email || current.email,
         hash,
-        role || current.role,
+        newRole,
         phone_number || current.phone_number,
         specialty || current.specialty,
-        department || current.department,
-        is_active ?? current.is_active,
+        newDepartment,
+        newIsActive,
+        designation || current.designation,
+        registration_number || current.registration_number,
         req.user?.username || "system",
         id,
       ]
@@ -203,5 +224,38 @@ exports.uploadAvatar = async (req, res) => {
   } catch (err) {
     console.error("uploadAvatar error:", err);
     res.status(500).json({ error: "Failed to upload avatar" });
+  }
+};
+
+//
+// 🚀 Upload Signature
+//
+//
+// 🚀 Upload Signature
+//
+exports.uploadSignature = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Security: Only Admin or Self can upload signature
+    const isSelf = req.user.id === parseInt(id);
+    const isAdmin = req.user.role === "admin";
+
+    if (!isSelf && !isAdmin) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    const uploadDir = path.join(__dirname, "../uploads/signatures");
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+    const filePath = `/uploads/signatures/${req.file.filename}`;
+    await pool.query("UPDATE users SET signature_path=$1 WHERE id=$2", [filePath, id]);
+
+    res.json({ success: true, path: filePath });
+  } catch (err) {
+    console.error("uploadSignature error:", err);
+    res.status(500).json({ error: "Failed to upload signature" });
   }
 };

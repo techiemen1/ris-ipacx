@@ -48,9 +48,8 @@
   margin: 1rem auto;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
   padding: 10mm;
-  /* Reduced from 15mm to Shift Up */
-  display: flex;
-  flex-direction: column;
+  display: block;
+  /* Changed from flex to prevent table squishing */
   position: relative;
   background-image: linear-gradient(to bottom, transparent 296mm, #e2e8f0 296mm, #e2e8f0 297mm, transparent 297mm);
   background-size: 100% 297mm;
@@ -79,7 +78,8 @@ table.main-table td {
 table.main-table {
   width: 100%;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
+  /* Changed from fixed to allow header rows to expand */
 }
 
 .report-content-cell {
@@ -224,24 +224,26 @@ table.main-table {
     box-shadow: none !important;
     background: transparent !important;
     background-image: none !important;
+    display: block !important;
+    transform: none !important;
+  }
+
+  table.main-table {
     display: table !important;
-    page-break-after: avoid !important;
-    page-break-before: avoid !important;
+    width: 100% !important;
+    border-collapse: collapse !important;
   }
 
-  .printable-area::after {
-    display: none !important;
-    content: none !important;
-  }
-
-  /* repeatable header/footer logic */
   thead {
     display: table-header-group !important;
   }
 
+  tbody {
+    display: table-row-group !important;
+  }
+
   tfoot {
     display: table-footer-group !important;
-    vertical-align: bottom !important;
   }
 
   /* Trick to push tfoot to bottom of the last page */
@@ -379,19 +381,24 @@ table.main-table {
 }
 
 .patient-card-table .label-cell {
-  background-color: #f1f5f9;
-  /* Slate-100 */
-  color: black;
-  font-weight: 700;
+  background-color: #e2e8f0;
+  /* Slate-200 for better contrast */
+  color: #0f172a;
+  /* Slate-900 */
+  font-weight: 800;
   text-transform: uppercase;
   white-space: nowrap;
-  /* Keep labels on one line */
 }
 
 .patient-card-table .val-cell {
   color: black;
   font-weight: 600;
   position: relative;
+  background-color: #ffffff;
+}
+
+.patient-card-table tr:hover .val-cell {
+  background-color: #f8fafc;
 }
 
 /* Premium Input Reset */
@@ -608,4 +615,140 @@ table.main-table {
   border-color: #bfdbfe;
   box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.05);
   transform: translateY(-1px);
+}
+
+/* Dictation Pulse Glow */
+.listening-pulse {
+  animation: listen-pulse 2s infinite ease-in-out;
+}
+
+@keyframes listen-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+
+  70% {
+    box-shadow: 0 0 0 15px rgba(59, 130, 246, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
+}
+
+/* FIX: Gold Standard 4-Column Grid */
+.print-content figure.report-grid-figure {
+  width: 21% !important;
+  /* Strictly 21% */
+  margin: 1.5% !important;
+  /* 1.5% * 8 = 12%. 21*4=84. 84+12=96%. Safe. */
+  float: left !important;
+  display: block !important;
+  /* Treat as block for float to work reliably */
+
+  vertical-align: top !important;
+  border: 1px solid #cbd5e1;
+  background-color: #f8fafc;
+  padding: 4px !important;
+  /* Padding inside the border */
+  border-radius: 4px;
+
+  /* Reset Flex if it was leaking */
+  flex: none !important;
+
+  height: auto !important;
+  overflow: hidden;
+  /* Contain floats inside if any */
+  box-sizing: border-box !important;
+
+  page-break-inside: avoid !important;
+}
+
+.print-content figure.report-grid-figure img {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1/1 !important;
+  object-fit: contain !important;
+  background: black;
+  display: block !important;
+  margin: 0 0 4px 0 !important;
+  /* Margin bottom for caption separation */
+  border: 1px solid #000;
+}
+
+.print-content figure.report-grid-figure figcaption {
+  display: block !important;
+  /* Ensure it sits below image */
+  width: 100% !important;
+
+  font-family: 'Inter', sans-serif !important;
+  font-size: 10px !important;
+  /* Small letter */
+  font-style: italic !important;
+  /* Italic */
+  color: #334155 !important;
+
+  text-align: center !important;
+  padding-top: 4px !important;
+  border-top: 1px dotted #cbd5e1;
+  line-height: 1.2 !important;
+}
+
+/* Clearfix for the container to wrap floats */
+.print-content::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+
+/* Clearfix for floats */
+.print-content::after {
+  content: "";
+  display: table;
+  clear: both;
+}
+
+/* FINAL OVERRIDE: 4-COLUMN GRID WITH CAPTIONS */
+.print-content figure,
+.print-content figure.report-grid-figure {
+  width: 22% !important;
+  margin: 1.5% !important;
+  float: left !important;
+  display: block !important;
+  vertical-align: top !important;
+  background-color: #f8fafc;
+  padding: 5px !important;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  height: auto !important;
+  box-sizing: border-box !important;
+  page-break-inside: avoid !important;
+}
+
+/* Force image to be block and separate from caption */
+.print-content figure img,
+.print-content figure.report-grid-figure img {
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: 1/1 !important;
+  object-fit: contain !important;
+  background: black !important;
+  display: block !important;
+  margin: 0 0 5px 0 !important;
+  border: 1px solid #000;
+}
+
+/* Force caption to be block at bottom */
+.print-content figure figcaption,
+.print-content figure.report-grid-figure figcaption {
+  display: block !important;
+  width: 100% !important;
+  font-family: 'Inter', sans-serif !important;
+  font-size: 10px !important;
+  font-style: italic !important;
+  color: #334155 !important;
+  text-align: center !important;
+  border-top: 1px dotted #cbd5e1;
+  padding-top: 2px !important;
 }

@@ -18,6 +18,7 @@ const Billing = lazy(() => import("./pages/Billing/BillingPage"));
 const Inventory = lazy(() => import("./pages/Inventory/InventoryPage"));
 const MWLPage = lazy(() => import("./pages/MWL/MWLPage"));
 const SettingsPage = lazy(() => import("./pages/Settings/SettingsPage"));
+const ProfilePage = lazy(() => import("./pages/Users/ProfilePage"));
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const OrderManagement = lazy(() => import("./pages/Orders/OrderManagement"));
 const PatientManagement = lazy(() => import("./pages/Patients/PatientManagement"));

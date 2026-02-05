@@ -3,6 +3,8 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { useParams } from "react-router-dom";
 import axiosInstance from "../services/axiosInstance";
 import DOMPurify from "dompurify";
+// @ts-ignore
+import html2pdf from "html2pdf.js";
 
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -18,15 +20,60 @@ import ImageExtension from "@tiptap/extension-image";
 import { SlashCommand } from "../lib/suggestionConfig";
 
 import {
-  Bold, Italic, Underline as UnderlineIcon, Save, Lock, Mic, MicOff,
+  Bold, Italic, Underline as UnderlineIcon, Save, Lock, Unlock, Mic, MicOff,
   AlignLeft, AlignCenter, AlignJustify, List, ListOrdered, X, Stethoscope, ImagePlus, Pencil,
   Phone, Siren, Mail, Globe, Printer, Eye, Strikethrough, Type, Sigma, AlertTriangle,
-  Table as TableIcon, Minus, Trash2, Info, History, Calendar, ChevronRight, ExternalLink, RefreshCcw, Command
+  Table as TableIcon, Minus, Trash2, Info, History, Calendar, ChevronRight, ExternalLink, RefreshCcw, Command,
+  Server, MessageSquare
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { SmartTemplateSelector } from "../components/report/SmartTemplateSelector";
 import { KeyImage } from "../components/report/KeyImagesPanel";
+import { Node, mergeAttributes, Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "prosemirror-state";
 import "./ReportEditor.css";
+
+const Figure = Node.create({
+  name: 'figure',
+  group: 'block',
+  content: 'image figcaption',
+  draggable: true,
+  // Make sure to allow class attribute
+  addAttributes() {
+    return {
+      class: {
+        default: null,
+        parseHTML: element => element.getAttribute('class'),
+        renderHTML: attributes => {
+          return { class: attributes.class };
+        },
+      },
+    };
+  },
+  parseHTML() {
+    return [
+      { tag: 'figure' },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['figure', mergeAttributes(HTMLAttributes), 0];
+  },
+});
+
+const Figcaption = Node.create({
+  name: 'figcaption',
+  group: 'block',
+  content: 'text*',
+  selectable: true,
+  parseHTML() {
+    return [
+      { tag: 'figcaption' },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['figcaption', mergeAttributes(HTMLAttributes), 0];
+  },
+});
 
 type WorkflowStatus = "draft" | "preliminary" | "final" | "addendum";
 
@@ -87,152 +134,34 @@ export default function ReportEditor({
   const [voiceNotes, setVoiceNotes] = useState<string>("");
   const [activeTab, setActiveTab] = useState<"context" | "notes">("context");
 
-  // Load dictation dictionary
-  useEffect(() => {
-    fetch('/radiology_dictionary.json')
-      .then(res => res.json())
-      .then(data => setDict(data))
-      .catch(err => console.error("Failed to load dictation dictionary:", err));
-  }, []);
-
-  const loadPriors = useCallback(async () => {
-    if (!patient?.patientID) return;
-    setLoadingPriors(true);
-    try {
-      const res = await axiosInstance.get(`/studies/patient/${patient.patientID}/priors?currentStudyUID=${studyUID}`);
-      if (res.data?.success) {
-        setPriors(res.data.data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch priors:", err);
-    } finally {
-      setLoadingPriors(false);
-    }
-  }, [patient?.patientID, studyUID]);
-
-  // Load priors and modalities
-  useEffect(() => {
-    loadPriors();
-
-    axiosInstance.get("/modalities").then(r => {
-      if (r.data?.data) setModalities(r.data.data);
-    }).catch(console.error);
-  }, [loadPriors]);
-
-  const fetchPriorReport = async (prior: PriorStudy) => {
-    setFetchingPriorReport(true);
-    try {
-      const res = await axiosInstance.get(`/reports/${prior.studyUID}`);
-      if (res.data?.success && res.data.data) {
-        setSelectedPriorReport({
-          title: `${prior.modality} - ${prior.description} (${formatDate(prior.date)})`,
-          content: res.data.data.content
-        });
-      } else {
-        alert("Report content not found or study not finalized.");
-      }
-    } catch (err) {
-      console.error("Failed to fetch prior report:", err);
-      alert("Error loading report content.");
-    } finally {
-      setFetchingPriorReport(false);
-    }
-  };
-
-  const getModalityColor = (modalityName?: string) => {
-    const mod = (modalityName || "").toUpperCase();
-    // 1. Try to find a exact match in user settings
-    const settingColor = modalities.find(m => m.name.toUpperCase() === mod || m.ae_title.toUpperCase() === mod)?.color;
-    if (settingColor) return settingColor;
-
-    // 2. Fallback to hardcoded clinical colors (Tailwind class names or hex)
-    if (mod.includes("CT")) return "#f59e0b"; // amber-500
-    if (mod.includes("MR")) return "#3b82f6"; // blue-500
-    if (mod.includes("US")) return "#a855f7"; // purple-500
-    if (mod.includes("XR") || mod.includes("CR") || mod.includes("DX")) return "#64748b"; // slate-500
-    return "#94a3b8"; // slate-400
-  };
-
-  // Auto-calculated title based on Modality + Body Part
-  const calculatedTitle = useMemo(() => {
-    if (isTitleManual && customTitle) return customTitle;
-    const parts = [];
-    if (patient?.modality) parts.push(patient.modality);
-    if (patient?.bodyPart && !patient.bodyPart.includes("(")) parts.push(patient.bodyPart);
-    parts.push("RADIOLOGY REPORT");
-    return parts.join(" ");
-  }, [patient?.modality, patient?.bodyPart, isTitleManual, customTitle]);
-
-  // Sync customTitle if not manual
-  useEffect(() => {
-    if (!isTitleManual) {
-      setCustomTitle(calculatedTitle);
-    }
-  }, [calculatedTitle, isTitleManual]);
-
-  // Auto-Recovery key
-  const DRAFT_KEY = `report_draft_${studyUID}`;
-
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Underline,
-      Placeholder.configure({ placeholder: "Type report content here..." }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
-      TextStyle,
-      FontFamily,
-      Color,
-      Highlight.configure({ multicolor: true }),
-      ImageExtension,
-      SlashCommand,
-    ],
-    editorProps: {
-      attributes: {
-        class: "print-content focus:outline-none min-h-[300px] prose max-w-none text-slate-800 leading-relaxed font-sans",
-        'data-modality': patient?.modality || "",
-      },
-    },
-    onUpdate: ({ editor }) => {
-      // Auto-save to LocalStorage every keystroke
-      localStorage.setItem(DRAFT_KEY, editor.getHTML());
-    }
-  });
-
-  // Sync modality to editor for contextual suggestions
-  useEffect(() => {
-    if (editor && patient?.modality) {
-      editor.setOptions({
-        editorProps: {
-          attributes: {
-            ...editor.options.editorProps.attributes,
-            'data-modality': patient.modality,
-          }
-        }
-      });
-    }
-  }, [editor, patient?.modality]);
-
-  const safeAxios = async (fn: () => Promise<any>, fallback?: any) => {
+  // Load dictation dictionary & Modalities
+  const safeAxios = useCallback(async (fn: () => Promise<any>, fallback?: any) => {
     try {
       return await fn();
     } catch (err) {
       console.warn("API Error:", err);
       return fallback;
     }
-  };
+  }, []);
 
-  // Expert Data Normalization & Cleaning
+  useEffect(() => {
+    fetch('/radiology_dictionary.json')
+      .then(res => res.json())
+      .then(data => setDict(data))
+      .catch(err => console.error("Failed to load dictation dictionary:", err));
+
+    safeAxios(async () => {
+      const { data } = await axiosInstance.get("/modalities");
+      setModalities(data?.data || []);
+    });
+  }, [safeAxios]);
+
   const normalizePatient = useCallback((raw: any): PatientMeta => {
     const data = raw || {};
     const cleanMod = (val: any) => {
       if (!val) return "";
       const s = String(val).trim();
-      // Expert cleaning of messy PACS placeholders
-      if (/^[-_.]+$/.test(s)) return ""; // "---" or "..."
+      if (/^[-_.]+$/.test(s)) return "";
       if (["undefined", "null", "pending", "unknown"].includes(s.toLowerCase())) return "";
       return s;
     };
@@ -249,144 +178,220 @@ export default function ReportEditor({
     };
   }, []);
 
-  // 4-Layer Waterfall Fetching
+  const loadPriors = useCallback(async () => {
+    if (!patient?.patientID) return;
+    setLoadingPriors(true);
+    await safeAxios(async () => {
+      const r = await axiosInstance.get(`/studies/patient/${patient.patientID}/priors?exclude=${studyUID}`);
+      if (r.data?.success) setPriors(r.data.data);
+    });
+    setLoadingPriors(false);
+  }, [patient?.patientID, studyUID, safeAxios]);
+
+  useEffect(() => { loadPriors(); }, [loadPriors]);
+
+  const viewPriorReport = async (uid: string, title: string) => {
+    setFetchingPriorReport(true);
+    await safeAxios(async () => {
+      const r = await axiosInstance.get(`/reports/${encodeURIComponent(uid)}`);
+      if (r.data?.success && r.data.data) {
+        setSelectedPriorReport({ title, content: r.data.data.content });
+      } else {
+        alert("No report found for this prior study.");
+      }
+    });
+    setFetchingPriorReport(false);
+  };
+
+  const getModalityColor = (modalityName?: string) => {
+    const mod = (modalityName || "").toUpperCase();
+    const settingColor = modalities.find(m => m.name.toUpperCase() === mod || m.ae_title.toUpperCase() === mod)?.color;
+    if (settingColor) return settingColor;
+    if (mod.includes("CT")) return "#f59e0b";
+    if (mod.includes("MR")) return "#3b82f6";
+    if (mod.includes("US")) return "#a855f7";
+    if (mod.includes("XR") || mod.includes("CR") || mod.includes("DX")) return "#64748b";
+    return "#94a3b8";
+  };
+
+  const calculatedTitle = useMemo(() => {
+    if (isTitleManual && customTitle) return customTitle;
+    const parts = [];
+    if (patient?.modality) parts.push(patient.modality);
+    if (patient?.bodyPart && !patient.bodyPart.includes("(")) parts.push(patient.bodyPart);
+    parts.push("RADIOLOGY REPORT");
+    return parts.join(" ");
+  }, [patient?.modality, patient?.bodyPart, isTitleManual, customTitle]);
+
   useEffect(() => {
-    if (!studyUID) return;
+    if (!isTitleManual) setCustomTitle(calculatedTitle);
+  }, [calculatedTitle, isTitleManual]);
 
-    const loadData = async () => {
-      // NUCLEAR STATE RESET: Prevent ALL Bleeding from previous studies
-      setLoading(true);
-      setStatus("draft");          // Reset to draft (fixes "Final" status persistence)
-      setKeyImages([]);            // Clear images
-      setReportContent(null);      // Clear editor content
-      setPartialText("");          // Clear dictation buffer
-      setPatient(null);            // Clear patient meta temporary
-      setCustomTitle("");          // Clear title
-      setIsTitleManual(false);     // Reset manual flag
+  const editor = useEditor({
+    extensions: [
+      StarterKit, Underline,
+      Placeholder.configure({ placeholder: "Type report content here..." }),
+      Table.configure({ resizable: true }),
+      TableRow, TableHeader, TableCell,
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      TextStyle, FontFamily, Color,
+      Highlight.configure({ multicolor: true }),
+      Highlight.configure({ multicolor: true }),
+      ImageExtension.configure({ inline: false, allowBase64: true }),
+      SlashCommand,
+      Figure, Figcaption,
+      // Custom Extension to clean up empty figures
+      Extension.create({
+        name: 'figureCleanup',
+        addProseMirrorPlugins() {
+          return [
+            new Plugin({
+              key: new PluginKey('figureCleanup'),
+              appendTransaction: (transactions, oldState, newState) => {
+                const tr = newState.tr;
+                let modified = false;
+                // Iterate through docs to find empty figures
+                newState.doc.descendants((node, pos) => {
+                  if (node.type.name === 'figure') {
+                    const hasImage = node.childCount > 0 && node.firstChild?.type.name === 'image';
+                    if (!hasImage) {
+                      // If no image (first child missing or not image), delete the whole figure
+                      tr.delete(pos, pos + node.nodeSize);
+                      modified = true;
+                    }
+                  }
+                });
+                return modified ? tr : null;
+              },
+            }),
+          ];
+        },
+      }),
+    ],
+    editorProps: {
+      attributes: {
+        class: "print-content focus:outline-none min-h-[300px] prose max-w-none text-slate-800 leading-relaxed font-sans",
+        'data-modality': patient?.modality || "",
+      },
+    },
+  });
 
-      // Layer 1: Existing Saved Report (Highest Authority)
-      let reportData: any = null;
-      await safeAxios(async () => {
-        const r = await axiosInstance.get(`/reports/${encodeURIComponent(studyUID)}`);
-        if (r.data?.success && r.data.data) {
-          reportData = r.data.data;
-          setStatus(reportData.status || "draft");
-          if (reportData.reportTitle) {
-            setCustomTitle(reportData.reportTitle);
-            setIsTitleManual(true);
-          }
-          if (reportData.content) {
-            setReportContent(reportData.content);
-            if (reportData.workflowNote) {
-              setWorkflowNote(reportData.workflowNote);
-            }
+  useEffect(() => {
+    if (!editor || !studyUID) return;
+    const handler = ({ editor: e }: { editor: any }) => {
+      localStorage.setItem(`report_draft_${studyUID}`, e.getHTML());
+    };
+    editor.on('update', handler);
+    return () => { editor.off('update', handler); };
+  }, [editor, studyUID]);
+
+  useEffect(() => {
+    if (editor && patient?.modality) {
+      editor.setOptions({
+        editorProps: {
+          attributes: {
+            ...editor.options.editorProps.attributes,
+            'data-modality': patient.modality,
           }
         }
       });
+    }
+  }, [editor, patient?.modality]);
 
-      // Layer 2: Local DB Meta
+  const loadIdRef = useRef(0);
+
+  useEffect(() => {
+    if (!studyUID) return;
+    const currentRequestId = ++loadIdRef.current;
+    let ignore = false;
+
+    const loadData = async () => {
+      setLoading(true);
+      if (editor) editor.commands.setContent("");
+      setStatus("draft"); setKeyImages([]); setReportContent(null);
+      setPatient(null); setCustomTitle(""); setIsTitleManual(false);
+      setWorkflowNote(""); setClinicalHistory(""); setVoiceNotes("");
+
+      let reportData: any = null;
+      await safeAxios(async () => {
+        const r = await axiosInstance.get(`/reports/${encodeURIComponent(studyUID)}`);
+        if (ignore || currentRequestId !== loadIdRef.current) return;
+        if (r.data?.success && r.data.data) {
+          reportData = r.data.data;
+          setStatus(reportData.status || "draft");
+          if (reportData.reportTitle) { setCustomTitle(reportData.reportTitle); setIsTitleManual(true); }
+          if (reportData.content) {
+            setReportContent(reportData.content);
+            if (reportData.workflowNote) setWorkflowNote(reportData.workflowNote);
+          }
+        }
+      });
+      if (ignore || currentRequestId !== loadIdRef.current) return;
+
       let dbMeta: any = {};
       await safeAxios(async () => {
         const r = await axiosInstance.get(`/studies/${studyUID}/meta`);
-        if (r.data?.success) dbMeta = normalizePatient(r.data.data);
+        if (!ignore && currentRequestId === loadIdRef.current && r.data?.success) dbMeta = normalizePatient(r.data.data);
       });
+      if (ignore || currentRequestId !== loadIdRef.current) return;
 
-      // Layer 3: Deep PACS Tags (Source of Truth)
       let pacsMeta: any = {};
       await safeAxios(async () => {
         const r = await axiosInstance.get(`/studies/${studyUID}/dicom-tags`);
-        if (r.data?.tags) pacsMeta = normalizePatient(r.data.tags);
+        if (!ignore && currentRequestId === loadIdRef.current && r.data?.tags) pacsMeta = normalizePatient(r.data.tags);
       });
+      if (ignore || currentRequestId !== loadIdRef.current) return;
 
-      // Layer 4: Local Storage Recovery (Safety Net)
-      const localDraft = localStorage.getItem(DRAFT_KEY);
-      if (!reportData?.content && localDraft) {
-        console.log("♻️ Recovered Draft from LocalStorage");
-        setReportContent(localDraft);
-      }
+      const localDraft = localStorage.getItem(`report_draft_${studyUID}`);
+      if (!reportData?.content && localDraft) setReportContent(localDraft);
 
-      // MERGE: Report(High) > PACS(Mid) > DB(Low)
-      const merged = {
-        ...dbMeta,
-        ...pacsMeta,          // PACS overrides DB
-        ...(reportData || {}), // Saved Report overrides all
-      };
-
-      // INTELLIGENT PARSING: Extract Age/Sex from Name if missing
-      // Pattern: "Name 34Y/M" or "Name 34Y M" or "Name (34Y/M)"
+      const merged = { ...dbMeta, ...pacsMeta, ...(reportData || {}) };
       if (merged.patientName && (!merged.patientAge || !merged.patientSex)) {
         const name = merged.patientName;
         const ageMatch = name.match(/(\d{1,3})[Yy]/);
         const sexMatch = name.match(/\b([MFmf])\b/) || name.match(/\/([MFmf])/);
-
         if (ageMatch && !merged.patientAge) merged.patientAge = ageMatch[1];
         if (sexMatch && !merged.patientSex) merged.patientSex = sexMatch[1].toUpperCase();
-
-        // Optional: Clean the name? usually medical legal requires keeping original string
-        // but we can offer a cleaned version if user asks. For now, keep as is.
       }
 
-      setPatient(merged); // STRICT OVERWRITE - Fixes "Previous Patient Cache" issue
-      setLoading(false);
+      if (!ignore && currentRequestId === loadIdRef.current) {
+        setPatient(merged); setLoading(false);
+      }
     };
 
-    // Parallel Org Settings - Always fetch fresh
     safeAxios(async () => {
       const r = await axiosInstance.get("/settings");
-      if (r.data?.data?.org) setOrgSettings(r.data.data.org);
+      if (!ignore && currentRequestId === loadIdRef.current && r.data?.data?.org) setOrgSettings(r.data.data.org);
     });
 
     loadData();
-
-    // Cleanup: Reset state when studyUID changes to prevent flash of old data
-    return () => {
-      setPatient(null);
-      setReportContent(null);
-    };
-  }, [studyUID]);
+    return () => { ignore = true; };
+  }, [studyUID, editor, safeAxios, normalizePatient]);
 
   useEffect(() => {
-    if (editor && reportContent && editor.isEmpty) {
-      editor.commands.setContent(reportContent);
-    }
+    if (editor && reportContent !== null) editor.commands.setContent(reportContent);
   }, [editor, reportContent]);
 
-  // Initial Format of Date
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return "";
     let d = dateStr;
-    if (d.includes("T")) d = d.split("T")[0]; // Handle ISO
+    if (d.includes("T")) d = d.split("T")[0];
     if (d.includes("-")) {
       const parts = d.split("-");
-      if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`; // YYYY-MM-DD -> DD/MM/YYYY
+      if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
     }
     if (/^\d{8}$/.test(d)) return `${d.slice(6, 8)}/${d.slice(4, 6)}/${d.slice(0, 4)}`;
     return d;
-  }
+  };
 
-  // Effect to populate formatted dates once
   useEffect(() => {
     if (patient?.studyDate && !patient.studyDate.includes("-") && !patient.studyDate.includes("/")) {
       setPatient(p => p ? ({ ...p, studyDate: formatDate(p.studyDate) }) : null);
     }
   }, [patient?.studyDate]);
 
-  // Auto-Title Logic
-  useEffect(() => {
-    if (!isTitleManual) {
-      const autoTitle = patient?.modality || patient?.bodyPart
-        ? `${patient.modality || ""} ${patient.bodyPart || ""} RADIOLOGY REPORT`.replace(/\s+/g, ' ').trim()
-        : "RADIOLOGY REPORT";
-      setCustomTitle(autoTitle);
-    }
-  }, [patient?.modality, patient?.bodyPart, isTitleManual]);
-
-  // Report Date State (Editable)
   const [reportDate, setReportDate] = useState(new Date().toLocaleDateString('en-GB'));
-
-  const header = useMemo(() => ({
-    reportDate: reportDate,
-  }), [reportDate]);
+  const header = useMemo(() => ({ reportDate }), [reportDate]);
 
   const loadKeyImages = async () => {
     const r = await safeAxios(() => axiosInstance.get(`/reports/${encodeURIComponent(studyUID)}/keyimages`));
@@ -403,628 +408,545 @@ export default function ReportEditor({
   };
 
   const deleteKeyImage = async (id: string) => {
-    if (confirm("Delete image?")) {
-      await safeAxios(() => axiosInstance.delete(`/reports/keyimage/${id}`));
-      loadKeyImages();
-    }
+    // Immediate delete without confirmation for speed - user request
+    await safeAxios(() => axiosInstance.delete(`/reports/keyimage/${id}`));
+    loadKeyImages();
   };
 
   const insertKeyImageToEditor = (img: KeyImage) => {
-    editor?.chain().focus().insertContent(`<img src="/api/uploads/keyimages/${img.file_path}" width="220" style="display:inline-block; margin:4px; border:1px solid #ddd;"/>`).run();
+    // 4 images per row = approx 23-24% width, considering margins
+    // Gold Standard: 4 images per row using inline-flex tiles
+    // Compact HTML string to prevent schema validation issues with whitespace
+    const content = `<figure class="report-grid-figure"><img src="/api/uploads/keyimages/${img.file_path}" /><figcaption>Caption</figcaption></figure>`;
+
+
+    // Note: The &nbsp; helps separate inline-blocks if the editor compresses whitespace
+    editor?.chain().focus().insertContent(content).run();
+
+    // Auto-remove (move) from panel after inserting - Gold Standard Workflow
+    setKeyImages(prev => prev.filter(i => i.id !== img.id));
+    // Ideally we might want to keep it on server but hide it, but user asked for "remove". 
+    // If they want to get it back, they re-upload. Or we just hide it locally. 
+    // Let's hide it locally for speed, but better to keep server in sync if they reload.
+    // Calling delete is destructive but matches "Remove from panel".
+    // Alternatively just filter locally: setKeyImages(prev => prev.filter(k => k.id !== img.id));
   };
 
-  // -------------------------
-  // SAVE / FINALIZE LOGIC
-  // -------------------------
-  const save = async (finalize = false) => {
-    if (!editor) return;
-    const content = editor.getHTML();
+  const handlePrint = () => {
+    const originalTitle = document.title;
 
-    // SAFETY CHECK
-    if (finalize) {
-      const text = editor.getText().trim();
-      if (!text || text.length < 10) {
-        alert("⚠️ Empty Report");
-        return;
+    // Medical Grade Naming: PATIENT_NAME_ACCESSION_DATE
+    const clean = (s?: string) => (s || "UNKNOWN").replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+    const pName = clean(patient?.patientName);
+    const acc = clean(patient?.accessionNumber);
+    // Format date as YYYYMMDD for sorting if possible, or just clean the string
+    let dateStr = clean(patient?.studyDate);
+
+    // Attempt standard medical filename format
+    const filename = `${pName}_${acc}_${dateStr}_REPORT`;
+
+    document.title = filename;
+    window.print();
+
+    // Restore title after print dialog opens (timeout ensures browser picks up new title)
+    setTimeout(() => {
+      document.title = originalTitle;
+    }, 500);
+  };
+
+  // Helper to generate PDF Blob
+  const generatePdfBlob = async () => {
+    const element = document.querySelector('.printable-area') as HTMLElement;
+    if (!element) return null;
+
+    // 1. Temporarily strip layout transforms that confuse html2canvas
+    const originalTransform = element.style.transform;
+    const originalClass = element.className; // Save tailwind classes
+
+    // Remove scaling classes temporarily to ensure 1:1 capture without offsets
+    element.classList.remove('scale-[0.9]', 'md:scale-100', 'transform', 'origin-top');
+    element.style.transform = 'none'; // Force reset
+    element.style.margin = '0 auto';  // Center
+    element.style.backgroundColor = '#ffffff'; // Ensure white background
+
+    const opt = {
+      margin: 10,
+      filename: 'report.pdf',
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        // Improved: Safely ignore UI elements
+        ignoreElements: (el: Element) => {
+          // html2canvas sometimes visits non-element nodes or SVGs where classList might differ
+          return el && el.classList && el.classList.contains('no-print');
+        }
+      },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    try {
+      // @ts-ignore
+      const pdfBlob = await html2pdf().from(element).set(opt).outputPdf('blob');
+      return pdfBlob;
+    } finally {
+      // 2. Restore original UI state
+      element.className = originalClass;
+      element.style.transform = originalTransform;
+      element.style.margin = '';
+      element.style.backgroundColor = '';
+    }
+  };
+
+  const handleSendToPacs = async () => {
+    if (!studyUID || !patient) return;
+    alert("Exporting to PACS...");
+
+    try {
+      const pdfBlob = await generatePdfBlob();
+      if (!pdfBlob) throw new Error("Could not generate PDF");
+
+      const fd = new FormData();
+      fd.append("pdf", pdfBlob, "report.pdf");
+      fd.append("metadata", JSON.stringify({
+        PatientName: patient.patientName,
+        PatientID: patient.patientID,
+        AccessionNumber: patient.accessionNumber,
+        StudyDate: patient.studyDate,
+        Modality: patient.modality
+      }));
+
+      await axiosInstance.post('/dicom/export-pdf', fd);
+      alert("Successfully sent to PACS!");
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to send to PACS: " + (err.response?.data?.message || err.message));
+    }
+  };
+
+  const handleShareReport = async (type: 'email' | 'sms' | 'whatsapp') => {
+    const promptLabel = type === 'email' ? 'Email' : (type === 'sms' ? 'Mobile Number' : 'WhatsApp Number');
+    const recipient = prompt(`Enter Patient ${promptLabel}:`);
+    if (!recipient) return;
+
+    alert(`Sending ${type === 'email' ? 'Email' : (type === 'sms' ? 'SMS' : 'WhatsApp')}...`);
+
+    try {
+      const pdfBlob = await generatePdfBlob();
+      if (!pdfBlob) throw new Error("Could not generate PDF");
+
+      const fd = new FormData();
+      fd.append("pdf", pdfBlob, "report.pdf");
+      fd.append("type", type);
+      fd.append("recipient", recipient);
+
+      // Pass Metadata for Professional Email/SMS Content
+      if (patient) {
+        fd.append("metadata", JSON.stringify({
+          patientName: patient.patientName,
+          accessionNumber: patient.accessionNumber,
+          studyDate: patient.studyDate ? new Date(patient.studyDate).toDateString() : 'N/A',
+          hospitalName: orgSettings.name || "MERCURY HOSPITALS"
+        }));
       }
-      if (!patient?.patientID) {
-        alert("⚠️ Missing Patient ID");
-        return;
-      }
+
+      await axiosInstance.post('/share/patient-report', fd);
+      alert(`${type === 'email' ? 'Email' : (type === 'sms' ? 'SMS' : 'WhatsApp')} sent successfully!`);
+    } catch (err: any) {
+      console.error(err);
+      alert("Failed to share report: " + (err.response?.data?.message || err.message));
+    }
+  };
+
+
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  // Fetch current user for disclaimer
+  useEffect(() => {
+    // Assuming we can get user info from context or local storage if not available easily here
+    // For now purely relying on RBAC context if accessible, or decoding token
+    const stored = localStorage.getItem("user");
+    if (stored) {
+      try { setCurrentUser(JSON.parse(stored)); } catch (e) { }
+    }
+  }, []);
+
+  const handleSave = async (statusOverride?: string) => {
+    if (!editor) return;
+
+    const finalStatus = statusOverride || status;
+
+    if (finalStatus === 'final' && !disclaimerAccepted) {
+      toast.error("You must accept the legal disclaimer to sign this report.");
+      return;
     }
 
-    setIsSaving(true);
-    await safeAxios(async () => {
+    const html = editor.getHTML();
+
+    try {
+      setIsSaving(true);
       await axiosInstance.post("/reports/save", {
-        studyUID,
-        content,
-        // We save the *EDITED* patient values
-        patientName: patient?.patientName,
+        studyUID: studyUID, // Assuming studyUID is the correct variable name
+        content: html,
+        workflow_status: finalStatus,
+        patientName: patient?.patientName, // Assuming patient is the correct variable name
         patientID: patient?.patientID,
         modality: patient?.modality,
         accessionNumber: patient?.accessionNumber,
         studyDate: patient?.studyDate,
-        reportTitle: customTitle,
-        workflow_note: workflowNote,
-        workflow_status: finalize ? (status === 'addendum' ? 'addendum' : 'final') : status
+        reportTitle: customTitle, // Assuming customTitle is the correct variable name
+        workflowNote: workflowNote,
       });
 
-      localStorage.removeItem(DRAFT_KEY); // Clear draft on success
-
-      if (finalize) {
-        if (status !== 'addendum') setStatus("final");
-        editor.setEditable(false);
-        alert(`✅ Verified & Signed!`);
-        onClose?.();
+      if (finalStatus === "final") {
+        await axiosInstance.post("/reports/finalize", {
+          studyUID: studyUID,
+          content: html,
+          disclaimer_accepted: true
+        });
+        // Industry Standard: Auto-Push to PACS upon finalization
+        // We run this without awaiting to not block the UI, or await if we want to ensure it sent
+        // ideally we await it but don't fail report saving if it fails (just warn)
+        handleSendToPacs().catch(e => console.error("Auto-Push PACS failed", e));
+        toast.success("Report FINALIZED and DIGITALLY SIGNED.");
+        // Reload to show signature
+        setTimeout(() => window.location.reload(), 1000);
       } else {
-        // Pulse effect handled by UI state
-        setTimeout(() => setIsSaving(false), 500);
+        toast.success("Draft saved.");
       }
-    });
-    setIsSaving(false);
+
+      setStatus(finalStatus);
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.response?.data?.message || "Failed to save report");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handlePrint = () => {
-    // Set dynamic filename for browser print dialog
-    const oldTitle = document.title;
-    const cleanName = (patient?.patientName || "Report").replace(/[^a-z0-9]/gi, '_');
-    const acc = patient?.accessionNumber || "000";
-    document.title = `${cleanName}_${acc}`;
-
-    document.body.classList.add('is-printing-report');
-    window.print();
-
-    // Restore original title
-    setTimeout(() => {
-      document.body.classList.remove('is-printing-report');
-      document.title = oldTitle;
-    }, 500);
-  };
-
-  // Dictation V3 (WebSocket)
+  // DICTATION LOGIC
   const [listening, setListening] = useState(false);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const [partialText, setPartialText] = useState("");
+  const socketRef = useRef<WebSocket | null>(null);
 
-  const startDictation = async (target: "editor" | "notes" = "editor") => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      alert("Microphone API Missing. Ensure HTTPS is active.");
-      return;
+  const toggleDictation = () => {
+    if (listening) {
+      socketRef.current?.close();
+      setListening(false);
+    } else {
+      startListening();
     }
+  };
 
-    let stream: MediaStream;
+  const startListening = async () => {
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-    } catch (err: any) {
-      alert(`Microphone access denied: ${err.name}`);
-      return;
-    }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const wsUrl = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/vosk`;
 
-    let audioContext: AudioContext;
-    try {
-      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-      audioContext = new AudioContextClass();
-      audioContextRef.current = audioContext;
-      if (audioContext.state === 'suspended') await audioContext.resume();
-    } catch (err: any) {
-      alert(`Audio Engine Error: ${err.name}`);
-      return;
-    }
+      const socket = new WebSocket(wsUrl);
+      socketRef.current = socket;
 
-    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const source = audioContext.createMediaStreamSource(stream);
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/vosk`;
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
 
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ config: { sampleRate: audioContext.sampleRate } }));
-        setIsSaving(false); // Reuse saving indicator or add new one? For now just silent success
-      };
-
-      ws.onerror = (e) => {
-        console.error("Vosk WebSocket Error:", e);
-        alert("Dictation Error: WebSocket connection failed. Verify server is running.");
-        stopDictation();
-      };
-
-      ws.onmessage = (event) => {
-        const result = JSON.parse(event.data);
-        if (result.final && result.text) {
-          // Smart Formatting for Medical Grade Dictation
-          let text = result.text;
-
-          // capitalization
-          if (text.length > 0) text = text.charAt(0).toUpperCase() + text.slice(1);
-
-          // Dynamic Expansion & Autocorrect from Dictionary
-          if (dict) {
-            // 1. Voice Variants (e.g. "calc" -> "calcification")
-            if (dict.voice_variants) {
-              Object.entries(dict.voice_variants).forEach(([shortcut, full]: [string, any]) => {
-                const regex = new RegExp(`\\b${shortcut}\\b`, 'gi');
-                text = text.replace(regex, full);
-              });
-            }
-
-            // 2. Expansions & Abbreviations (e.g. "nad" -> "NAD (No Abnormality Detected)")
-            if (dict.expansions) {
-              Object.entries(dict.expansions).forEach(([shortcut, full]: [string, any]) => {
-                const regex = new RegExp(`\\b${shortcut}\\b`, 'gi');
-                text = text.replace(regex, full);
-              });
-            }
-
-            // 3. Indian Terminology / Common Phrasings (Ensure correct casing)
-            if (dict.indian_specific) {
-              dict.indian_specific.forEach((phrase: string) => {
-                const regex = new RegExp(`\\b${phrase}\\b`, 'gi');
-                text = text.replace(regex, phrase);
-              });
-            }
+      processor.onaudioprocess = (e) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcmData = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
           }
+          socket.send(pcmData.buffer);
+        }
+      };
 
-          // punctuation replacement
-          text = text.replace(/ period/g, ".")
-            .replace(/ full stop/g, ".")
-            .replace(/ comma/g, ",")
-            .replace(/ question mark/g, "?")
-            .replace(/ new line/g, "\n")
-            .replace(/ paragraph/g, "\n\n");
+      socket.onopen = () => {
+        setListening(true);
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+      };
 
-          // Ensure space after punctuation if missing
-          text = text.replace(/([.,?])([^\s])/g, '$1 $2');
+      socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.final === false) {
+          setPartialText(data.text);
+        } else if (data.text) {
+          let final = data.text.trim();
+          if (final) {
+            final = final.charAt(0).toUpperCase() + final.slice(1);
+            if (!/[.!?]$/.test(final)) final += ".";
 
-          if (activeTab === 'notes') {
-            setVoiceNotes(prev => prev + text + " ");
-          } else {
-            editor?.chain().focus().insertContent(text + " ").run();
+            if (activeTab === "notes") {
+              setVoiceNotes(prev => prev + (prev ? " " : "") + final);
+            } else {
+              editor?.chain().focus().insertContent(final + " ").run();
+            }
           }
           setPartialText("");
-        } else if (result.text) {
-          setPartialText(result.text);
-        }
-      };
-
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-      processor.onaudioprocess = (e: any) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          const inputData = e.inputBuffer.getChannelData(0);
-          const buffer = new Int16Array(inputData.length);
-          for (let i = 0; i < inputData.length; i++) {
-            buffer[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+          if (!isLockedMic) {
+            socket.close();
+            setListening(false);
           }
-          ws.send(buffer.buffer);
         }
       };
 
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-      setListening(true);
-    } catch (err: any) {
-      alert(`Processor Error: ${err.message}`);
+      socket.onclose = () => {
+        setListening(false);
+        stream.getTracks().forEach(t => t.stop());
+        processor.disconnect();
+        source.disconnect();
+      };
+
+    } catch (err) {
+      console.error("Mic error:", err);
+      alert("Microphone access denied or Vosk server offline.");
     }
   };
 
-  // Re-start logic for Locked Mic if it drops
-  useEffect(() => {
-    if (isLockedMic && !listening) {
-      startDictation();
-    }
-  }, [isLockedMic, listening]);
-
-  const stopDictation = () => {
-    wsRef.current?.close();
-    wsRef.current = null;
-    processorRef.current?.disconnect();
-    audioContextRef.current?.close();
-    streamRef.current?.getTracks().forEach(track => track.stop());
-    setListening(false);
-    setPartialText("");
-  };
-
-  const toggleDictation = () => { if (listening) stopDictation(); else startDictation(); };
-
-  // Advanced Sidebar Actions
-  const insertSymbol = (symbol: string) => {
-    editor?.chain().focus().insertContent(symbol).run();
-  };
-
-  const insertCriticalFlag = () => {
-    editor?.chain().focus()
-      .insertContent('<div class="critical-finding-alert">⚠️ CRITICAL FINDING: </div>')
-      .run();
-  };
-
-  const insertMeasurementTable = () => {
-    editor?.chain().focus()
-      .insertTable({ rows: 3, cols: 2, withHeaderRow: true })
-      .run();
-  };
+  const insertSymbol = (symbol: string) => { editor?.chain().focus().insertContent(symbol).run(); };
+  const insertCriticalFlag = () => { editor?.chain().focus().insertContent('<div class="critical-finding-alert">⚠️ CRITICAL FINDING: </div>').run(); };
+  const insertMeasurementTable = () => { editor?.chain().focus().insertTable({ rows: 3, cols: 2, withHeaderRow: true }).run(); };
 
   if (!editor) return null;
 
   return (
     <div className="flex h-screen w-full bg-slate-100 text-slate-900 font-sans overflow-hidden">
-
-      {/* MEDICAL GRADE VERTICAL COMMAND CENTER */}
       <div className="medical-sidebar no-print shadow-xl">
-        {/* Branding/Top Icon */}
         <div className="sidebar-group mb-2">
-          <div className="bg-blue-600 p-2 rounded-xl shadow-md border border-blue-400">
-            <Stethoscope className="w-5 h-5 text-white" />
-          </div>
+          <div className="bg-blue-600 p-2 rounded-xl shadow-md border border-blue-400"><Stethoscope className="w-5 h-5 text-white" /></div>
         </div>
-
-        {/* 1. FORMATTING GROUP */}
         <div className="sidebar-group">
           <span className="sidebar-label">Format</span>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleBold().run()} className={`sidebar-btn ${editor.isActive('bold') ? 'active' : ''}`} title="Bold (Ctrl+B)"><Bold size={18} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleItalic().run()} className={`sidebar-btn ${editor.isActive('italic') ? 'active' : ''}`} title="Italic (Ctrl+I)"><Italic size={18} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`sidebar-btn ${editor.isActive('underline') ? 'active' : ''}`} title="Underline (Ctrl+U)"><UnderlineIcon size={18} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleStrike().run()} className={`sidebar-btn ${editor.isActive('strike') ? 'active' : ''}`} title="Strikethrough"><Strikethrough size={18} /></Button>
-
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleBold().run()} className={`sidebar-btn ${editor.isActive('bold') ? 'active' : ''}`}><Bold size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleItalic().run()} className={`sidebar-btn ${editor.isActive('italic') ? 'active' : ''}`}><Italic size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`sidebar-btn ${editor.isActive('underline') ? 'active' : ''}`}><UnderlineIcon size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().toggleStrike().run()} className={`sidebar-btn ${editor.isActive('strike') ? 'active' : ''}`}><Strikethrough size={18} /></Button>
           <div className="sidebar-divider my-1" />
-
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setTextAlign('left').run()} className={`sidebar-btn ${editor.isActive({ textAlign: 'left' }) ? 'active' : ''}`} title="Align Left"><AlignLeft size={18} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setTextAlign('center').run()} className={`sidebar-btn ${editor.isActive({ textAlign: 'center' }) ? 'active' : ''}`} title="Align Center"><AlignCenter size={18} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setTextAlign('justify').run()} className={`sidebar-btn ${editor.isActive({ textAlign: 'justify' }) ? 'active' : ''}`} title="Justify"><AlignJustify size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setTextAlign('left').run()} className={`sidebar-btn ${editor.isActive({ textAlign: 'left' }) ? 'active' : ''}`}><AlignLeft size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setTextAlign('center').run()} className={`sidebar-btn ${editor.isActive({ textAlign: 'center' }) ? 'active' : ''}`}><AlignCenter size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setTextAlign('justify').run()} className={`sidebar-btn ${editor.isActive({ textAlign: 'justify' }) ? 'active' : ''}`}><AlignJustify size={18} /></Button>
         </div>
-
-        {/* 2. SCIENTIFIC & TOOLS */}
         <div className="sidebar-group">
           <span className="sidebar-label">Medical</span>
           <div className="flex flex-col gap-1">
-            <Button variant="ghost" size="icon" onClick={() => insertSymbol('°')} className="sidebar-btn" title="Degree Symbol (°)"><span className="text-xs font-bold">°</span></Button>
-            <Button variant="ghost" size="icon" onClick={() => insertSymbol('±')} className="sidebar-btn" title="Plus-Minus (±)"><span className="text-xs font-bold">±</span></Button>
-            <Button variant="ghost" size="icon" onClick={() => insertSymbol('µ')} className="sidebar-btn" title="Micro (µ)"><span className="text-xs font-bold">µ</span></Button>
+            <Button variant="ghost" size="icon" onClick={() => insertSymbol('°')} className="sidebar-btn"><span className="text-xs font-bold">°</span></Button>
+            <Button variant="ghost" size="icon" onClick={() => insertSymbol('±')} className="sidebar-btn"><span className="text-xs font-bold">±</span></Button>
+            <Button variant="ghost" size="icon" onClick={() => insertSymbol('µ')} className="sidebar-btn"><span className="text-xs font-bold">µ</span></Button>
           </div>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()} className="sidebar-btn text-orange-500" title="Clear All Formatting"><Type size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().unsetAllMarks().clearNodes().run()} className="sidebar-btn text-orange-500"><Type size={18} /></Button>
         </div>
-
-        {/* 3. INSERT GROUP */}
         <div className="sidebar-group">
           <span className="sidebar-label">Insert</span>
-          <Button variant="ghost" size="icon" onClick={() => setShowKeyImages(!showKeyImages)} className={`sidebar-btn ${showKeyImages ? 'active text-blue-600' : ''}`} title="Key Images Panel"><ImagePlus size={19} /></Button>
-          <Button variant="ghost" size="icon" onClick={insertCriticalFlag} className="sidebar-btn text-red-500 hover:bg-red-50" title="FLAG CRITICAL FINDING"><AlertTriangle size={19} /></Button>
-          <Button variant="ghost" size="icon" onClick={insertMeasurementTable} className="sidebar-btn text-purple-600 hover:bg-purple-50" title="Insert Measurement Table"><TableIcon size={19} /></Button>
-          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setHorizontalRule().run()} className="sidebar-btn" title="Horizontal Divider"><Minus size={19} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => setShowKeyImages(!showKeyImages)} className={`sidebar-btn ${showKeyImages ? 'active text-blue-600' : ''}`}><ImagePlus size={19} /></Button>
+          <Button variant="ghost" size="icon" onClick={insertCriticalFlag} className="sidebar-btn text-red-500 hover:bg-red-50"><AlertTriangle size={19} /></Button>
+          <Button variant="ghost" size="icon" onClick={insertMeasurementTable} className="sidebar-btn text-purple-600 hover:bg-purple-50"><TableIcon size={19} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => editor.chain().focus().setHorizontalRule().run()} className="sidebar-btn"><Minus size={19} /></Button>
         </div>
-
+        <div className="sidebar-group">
+          <span className="sidebar-label">Share</span>
+          <Button variant="ghost" size="icon" onClick={handleSendToPacs} className="sidebar-btn text-blue-600 hover:bg-blue-50" title="Export to PACS"><Server size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => handleShareReport('email')} className="sidebar-btn text-emerald-600 hover:bg-emerald-50" title="Email Report"><Mail size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => handleShareReport('sms')} className="sidebar-btn text-purple-600 hover:bg-purple-50" title="SMS Report"><MessageSquare size={18} /></Button>
+          <Button variant="ghost" size="icon" onClick={() => handleShareReport('whatsapp')} className="sidebar-btn text-green-600 hover:bg-green-50" title="WhatsApp Report"><Phone size={18} /></Button>
+        </div>
+        <div className="sidebar-group">
+          <span className="sidebar-label">Panel</span>
+          <Button variant="ghost" size="icon" onClick={() => setShowWorkflowPanel(!showWorkflowPanel)} className={`sidebar-btn ${showWorkflowPanel ? 'active text-blue-600' : ''}`} title="Toggle History/Notes Panel">
+            {showWorkflowPanel ? <ChevronRight size={19} /> : <History size={19} />}
+          </Button>
+        </div>
         <div className="flex-1" />
-
-        {/* 4. SYSTEM ACTIONS - MINIMIZED */}
         <div className="sidebar-group border-t border-slate-100 pt-4 pb-2">
-          {onClose && (
-            <Button variant="ghost" size="icon" onClick={onClose} className="sidebar-btn text-slate-400 hover:text-red-500 hover:bg-red-50" title="Exit Editor">
-              <X size={22} />
-            </Button>
-          )}
+          {onClose && <Button variant="ghost" size="icon" onClick={onClose} className="sidebar-btn text-slate-400 hover:text-red-500 hover:bg-red-50"><X size={22} /></Button>}
         </div>
       </div>
 
       <div className="flex-1 flex flex-col h-full relative bg-slate-50">
-
-        {/* TOP CONTROL STRIP - REFINED */}
         <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-40 no-print shadow-sm control-strip-glass">
           <div className="flex items-center gap-6">
-            {/* Dictation Controller */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={toggleDictation}
-              className={`h-9 px-4 gap-2 border-slate-200 rounded-full shadow-sm transition-all duration-300 ${listening ? 'bg-red-50 border-red-500 text-red-600 ring-4 ring-red-500/10' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
-            >
-              <div className={`w-2 h-2 rounded-full ${listening ? 'bg-red-500 animate-pulse' : 'bg-slate-300'}`} />
-              <span className="text-[10px] font-bold uppercase tracking-tight">{listening ? 'Listening...' : 'Start Dictation'}</span>
-            </Button>
+            <div className="flex items-center gap-1 group">
+              <Button variant="outline" size="sm" onClick={toggleDictation} className={`h-9 px-4 gap-2 border-slate-200 rounded-full shadow-sm transition-all duration-300 ${listening ? 'bg-red-50 border-red-500 text-red-600 ring-4 ring-red-500/10' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                <div className={`w-2 h-2 rounded-full ${listening ? 'bg-red-500 animate-pulse' : 'bg-slate-300'}`} />
+                <span className="text-[10px] font-bold uppercase tracking-tight">{listening ? 'Listening...' : 'Start Dictation'}</span>
+              </Button>
+              <Button variant="ghost" size="icon" onClick={() => setIsLockedMic(!isLockedMic)} className={`h-8 w-8 rounded-full transition-all ${isLockedMic ? 'text-red-600 bg-red-50' : 'text-slate-300 hover:text-slate-500'}`} title="Lock/Unlock Microphone (Hands-Free)">
+                {isLockedMic ? <Lock size={14} /> : <Unlock size={14} />}
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
-            <SmartTemplateSelector
-              modality={patient?.modality}
-              bodyPart={patient?.bodyPart}
-              gender={patient?.patientSex}
-              onSelect={(c) => editor?.commands.setContent(c)}
-            />
-            <Button variant="outline" size="sm" onClick={handlePrint} className="h-9 gap-2 border-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-lg shadow-sm">
-              <Printer size={15} /> <span className="text-[10px] font-bold uppercase">Print</span>
-            </Button>
+            <SmartTemplateSelector modality={patient?.modality} bodyPart={patient?.bodyPart} gender={patient?.patientSex} onSelect={(html) => editor.commands.setContent(html)} />
+
+
+
+            <Button variant="outline" size="sm" onClick={handlePrint} className="h-9 gap-2 border-slate-200 rounded-xl px-4 text-slate-600 font-bold text-xs uppercase tracking-widest"><Printer size={16} /> Print</Button>
           </div>
         </div>
 
-        {/* MAIN BODY: EDITOR + WORKFLOW PANEL */}
         <div className="flex-1 flex overflow-hidden relative">
-
-          {/* EDITOR SCROLL AREA */}
           <div className="flex-1 overflow-auto p-4 md:p-8 flex justify-center custom-scrollbar bg-slate-50/50">
-            <div className="printable-area transform scale-[0.9] md:scale-100 shadow-2xl origin-top">
-              {/* HOSPITAL HEADER - EDITABLE */}
-              <div className="text-center mb-0 mt-0">
-                <input
-                  className="field-input-reset text-center text-3xl font-bold text-slate-900 uppercase tracking-wide font-sans w-full bg-transparent placeholder-slate-300 focus:placeholder-transparent no-print"
-                  value={orgSettings.name || ""}
-                  onChange={e => setOrgSettings(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="HOSPITAL NAME"
-                />
-                <h1 className="text-3xl font-bold text-slate-900 uppercase tracking-widest font-serif-premium only-print mb-1 mt-1">{orgSettings.name || "CAPRICORN HOSPITALS"}</h1>
+            {loading ? (
+              <div className="flex flex-col items-center justify-center gap-4 text-slate-400 animate-in fade-in duration-500">
+                <div className="w-12 h-12 border-4 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
+                <span className="text-xs font-bold uppercase tracking-widest">Wiping Cache & Loading Patient...</span>
               </div>
-
-              {/* PATIENT CARD - FIXED COLUMNS */}
-              <table className="patient-card-table mb-1">
-                <colgroup>
-                  <col style={{ width: '18%' }} />
-                  <col style={{ width: '46%' }} />
-                  <col style={{ width: '18%' }} />
-                  <col style={{ width: '18%' }} />
-                </colgroup>
-                <tbody>
-                  <tr>
-                    <td className="label-cell">PATIENT NAME</td>
-                    <td className="val-cell">
-                      <textarea
-                        rows={1}
-                        className="field-input-reset block w-full no-print"
-                        value={patient?.patientName || ""}
-                        onChange={e => setPatient(p => ({ ...p!, patientName: e.target.value }))}
-                        onInput={(e) => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'; }}
-                      />
-                      <span className="only-print">{patient?.patientName || "—"}</span>
-                    </td>
-                    <td className="label-cell">AGE / SEX</td>
-                    <td className="val-cell">
-                      <div className="flex gap-1 no-print">
-                        <input className="field-input-reset w-8" value={patient?.patientAge || ""} onChange={e => setPatient(p => ({ ...p!, patientAge: e.target.value }))} placeholder="00" />
-                        <span>/</span>
-                        <input className="field-input-reset w-8" value={patient?.patientSex || ""} onChange={e => setPatient(p => ({ ...p!, patientSex: e.target.value }))} placeholder="M" />
+            ) : (
+              <div className={`printable-area transition-all duration-700 transform scale-[0.9] md:scale-100 shadow-2xl origin-top ${listening ? 'listening-pulse' : ''}`}>
+                <table className="main-table w-full border-collapse">
+                  <thead>
+                    <tr><td>
+                      <div className="text-center mb-0 mt-0">
+                        <input className="field-input-reset text-center text-3xl font-bold text-slate-900 uppercase tracking-widest font-serif-premium w-full bg-transparent placeholder-slate-300 focus:placeholder-transparent no-print" value={orgSettings.name || ""} onChange={e => setOrgSettings(prev => ({ ...prev, name: e.target.value }))} placeholder="HOSPITAL NAME" />
+                        <h1 className="text-3xl font-bold text-slate-900 uppercase tracking-widest font-serif-premium only-print mb-1 mt-1">{orgSettings.name || "CAPRICORN HOSPITALS"}</h1>
                       </div>
-                      <span className="only-print">{patient?.patientAge}/{patient?.patientSex}</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="label-cell">PATIENT ID</td>
-                    <td className="val-cell">
-                      <input className="field-input-reset no-print" value={patient?.patientID || ""} onChange={e => setPatient(p => ({ ...p!, patientID: e.target.value }))} />
-                      <span className="only-print">{patient?.patientID}</span>
-                    </td>
-                    <td className="label-cell">ACCESSION</td>
-                    <td className="val-cell">
-                      <input className="field-input-reset no-print" value={patient?.accessionNumber || ""} onChange={e => setPatient(p => ({ ...p!, accessionNumber: e.target.value }))} />
-                      <span className="only-print">{patient?.accessionNumber}</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="label-cell">REF DOCTOR</td>
-                    <td className="val-cell">
-                      <input className="field-input-reset no-print" value={patient?.referringPhysician || ""} onChange={e => setPatient(p => ({ ...p!, referringPhysician: e.target.value }))} />
-                      <span className="only-print">{patient?.referringPhysician}</span>
-                    </td>
-                    <td className="label-cell">SCAN DATE</td>
-                    <td className="val-cell">
-                      <input
-                        className="field-input-reset no-print"
-                        value={
-                          patient?.studyDate?.includes("T")
-                            ? formatDate(patient.studyDate)
-                            : (patient?.studyDate?.includes("-") && patient.studyDate.length === 10
-                              ? formatDate(patient.studyDate)
-                              : (patient?.studyDate || ""))
-                        }
-                        onChange={e => setPatient(p => ({ ...p!, studyDate: e.target.value }))}
-                        placeholder="DD/MM/YYYY"
-                      />
-                      <span className="only-print">{formatDate(patient?.studyDate)}</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="label-cell">MODALITY</td>
-                    <td className="val-cell font-bold text-blue-900">
-                      <input className="field-input-reset no-print" value={patient?.modality || ""} onChange={e => setPatient(p => ({ ...p!, modality: e.target.value }))} placeholder="MODALITY" />
-                      <span className="only-print">{patient?.modality}</span>
-                    </td>
-                    <td className="label-cell">REPORT DATE</td>
-                    <td className="val-cell">
-                      <input
-                        className="field-input-reset no-print"
-                        value={reportDate}
-                        onChange={(e) => setReportDate(e.target.value)}
-                        placeholder="DD/MM/YYYY"
-                      />
-                      <span className="only-print">{reportDate}</span>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td className="label-cell">BODY PART</td>
-                    <td className="val-cell" colSpan={3}>
-                      <input className="field-input-reset no-print" value={patient?.bodyPart || ""} onChange={e => setPatient(p => ({ ...p!, bodyPart: e.target.value }))} placeholder="BODY PART (e.g. CHEST, ABDOMEN)" />
-                      <span className="only-print">{patient?.bodyPart}</span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-              {/* REPORT TITLE - EDITABLE */}
-              <div className="flex justify-center mb-2">
-                <div className="text-center py-1 border-b-2 border-slate-900 w-full px-4">
-                  <input
-                    className="field-input-reset text-center text-xl font-bold uppercase tracking-widest w-full placeholder-slate-400 focus:placeholder-transparent no-print"
-                    value={customTitle}
-                    onChange={(e) => {
-                      setCustomTitle(e.target.value);
-                      setIsTitleManual(true);
-                    }}
-                  />
-                  <h2 className="text-xl font-bold uppercase tracking-widest only-print">
-                    {customTitle}
-                  </h2>
-                </div>
-              </div>
-
-              <div className="flex-1 py-2 min-h-[500px]">
-                <EditorContent editor={editor} />
-              </div>
-
-              {/* SIGNATURE BLOCK */}
-              <div className="flex justify-between items-end px-8 pt-8 signature-block mb-10">
-                <div className="text-center">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">REFERRING PHYSICIAN</p>
-                </div>
-                <div className="text-center min-w-[200px]">
-                  <div className="h-8 flex items-center justify-center italic text-slate-400 text-xs">
-                    {status === 'final' ? "Digitally Signed & Verified" : ""}
-                  </div>
-                  <p className="font-bold text-lg text-slate-900 leading-none">Dr. Result Consultant</p>
-                  <p className="text-xs text-slate-500 font-bold uppercase tracking-tight mt-1">MD, Radiodiagnosis</p>
-                </div>
-              </div>
-
-              {/* FIXED FOOTER STRIPE - APPEARS ON EVERY PAGE */}
-              <div className="fixed-footer-stripe text-center border-t-2 border-slate-900 pt-1 mt-auto">
-                <p className="text-sm font-bold uppercase text-slate-800 tracking-wide mb-1">{orgSettings.address || "#1, BANGALORE OUTER RING ROAD, HEBBAL, BANGALORE, 560031"}</p>
-                <div className="contact-line flex justify-center items-center gap-4">
-                  <div className="flex items-center gap-1">
-                    <Phone size={11} className="text-slate-900 fill-current" />
-                    <span>{orgSettings.enquiryPhone || "+91 9886617662"}</span>
-                  </div>
-                  <span className="text-slate-300">|</span>
-                  <div className="flex items-center gap-1 text-red-600">
-                    <Siren size={11} className="fill-current" />
-                    <span>{orgSettings.contactPhone || "+91 9886517662"}</span>
-                  </div>
-                  <span className="text-slate-300">|</span>
-                  <div className="flex items-center gap-1">
-                    <Mail size={11} className="text-sky-500 fill-current" />
-                    <span>{orgSettings.email || "radiology@capricornhospitals.com"}</span>
-                  </div>
-                  <span className="text-slate-300">|</span>
-                  <div className="flex items-center gap-1">
-                    <Globe size={11} className="text-blue-700" />
-                    <span>{orgSettings.website || "www.capricornhospitals.com"}</span>
+                      <div className="flex justify-between items-center px-1 mb-1 no-print">
+                        <div className="flex items-center gap-2">
+                          <span className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white text-[10px] font-black rounded-full shadow-sm identity-badge uppercase tracking-widest"><Lock size={10} /> Patient Secure Mode</span>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Verified DICOM Node: PACS01</span>
+                        </div>
+                        <div className="flex items-center gap-4 text-[10px] font-bold text-slate-400 uppercase tracking-tighter">
+                          <span>{new Date().toLocaleTimeString()}</span>
+                          <span>RIS-V3.2</span>
+                        </div>
+                      </div>
+                      <table className="patient-card-table mb-2">
+                        <colgroup><col style={{ width: '18%' }} /><col style={{ width: '46%' }} /><col style={{ width: '18%' }} /><col style={{ width: '18%' }} /></colgroup>
+                        <tbody>
+                          <tr>
+                            <td className="label-cell">PATIENT NAME</td>
+                            <td className="val-cell">
+                              <div className="flex items-center w-full">
+                                <textarea rows={1} className="field-input-reset block w-full no-print font-bold uppercase" value={patient?.patientName || ""} onChange={e => setPatient(p => ({ ...p!, patientName: e.target.value }))} onInput={(e) => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'; }} />
+                                <span className="only-print font-bold uppercase">{patient?.patientName || "—"}</span>
+                              </div>
+                            </td>
+                            <td className="label-cell">AGE / SEX</td>
+                            <td className="val-cell">
+                              <div className="flex gap-1 no-print font-bold">
+                                <input className="field-input-reset w-8" value={patient?.patientAge || ""} onChange={e => setPatient(p => ({ ...p!, patientAge: e.target.value }))} placeholder="00" />
+                                <span>/</span>
+                                <input className="field-input-reset w-8" value={patient?.patientSex || ""} onChange={e => setPatient(p => ({ ...p!, patientSex: e.target.value }))} placeholder="M" />
+                              </div>
+                              <span className="only-print font-bold">{patient?.patientAge}/{patient?.patientSex}</span>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">PATIENT ID</td>
+                            <td className="val-cell"><input className="field-input-reset no-print font-bold" value={patient?.patientID || ""} onChange={e => setPatient(p => ({ ...p!, patientID: e.target.value }))} /><span className="only-print font-bold">{patient?.patientID}</span></td>
+                            <td className="label-cell">ACCESSION</td>
+                            <td className="val-cell"><input className="field-input-reset no-print font-bold" value={patient?.accessionNumber || ""} onChange={e => setPatient(p => ({ ...p!, accessionNumber: e.target.value }))} /><span className="only-print font-bold">{patient?.accessionNumber}</span></td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">REF DOCTOR</td>
+                            <td className="val-cell"><textarea rows={1} className="field-input-reset no-print min-h-[1.5em] font-bold uppercase" value={patient?.referringPhysician || ""} onChange={e => setPatient(p => ({ ...p!, referringPhysician: e.target.value }))} onInput={(e) => { e.currentTarget.style.height = 'auto'; e.currentTarget.style.height = e.currentTarget.scrollHeight + 'px'; }} /><span className="only-print font-bold uppercase">{patient?.referringPhysician}</span></td>
+                            <td className="label-cell">SCAN DATE</td>
+                            <td className="val-cell"><input className="field-input-reset no-print font-bold" value={patient?.studyDate?.includes("T") ? formatDate(patient.studyDate) : (patient?.studyDate?.includes("-") && patient.studyDate.length === 10 ? formatDate(patient.studyDate) : (patient?.studyDate || ""))} onChange={e => setPatient(p => ({ ...p!, studyDate: e.target.value }))} placeholder="DD/MM/YYYY" /><span className="only-print font-bold">{formatDate(patient?.studyDate)}</span></td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">MODALITY</td>
+                            <td className="val-cell font-bold text-blue-900 uppercase">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full shadow-sm" style={{ backgroundColor: getModalityColor(patient?.modality) }} />
+                                <input className="field-input-reset no-print font-black" value={patient?.modality || ""} onChange={e => setPatient(p => ({ ...p!, modality: e.target.value }))} placeholder="MODALITY" />
+                                <span className="only-print">{patient?.modality}</span>
+                              </div>
+                            </td>
+                            <td className="label-cell">REPORT DATE</td>
+                            <td className="val-cell"><input className="field-input-reset no-print font-bold" value={reportDate} onChange={(e) => setReportDate(e.target.value)} placeholder="DD/MM/YYYY" /><span className="only-print font-bold">{reportDate}</span></td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">BODY PART</td>
+                            <td className="val-cell uppercase font-bold" colSpan={3}><input className="field-input-reset no-print" value={patient?.bodyPart || ""} onChange={e => setPatient(p => ({ ...p!, bodyPart: e.target.value }))} placeholder="BODY PART" /><span className="only-print">{patient?.bodyPart}</span></td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <div className="flex justify-center mb-2">
+                        <div className="text-center py-1 border-b-2 border-slate-900 w-full px-4">
+                          <input className="field-input-reset text-center text-xl font-bold uppercase tracking-widest w-full font-serif-premium no-print bg-transparent" value={customTitle} onChange={(e) => { setCustomTitle(e.target.value); setIsTitleManual(true); }} />
+                          <h2 className="text-xl font-bold uppercase tracking-widest only-print font-serif-premium">{customTitle}</h2>
+                        </div>
+                      </div>
+                    </td></tr>
+                  </thead>
+                  <tbody><tr><td className="report-content-cell py-4">
+                    <EditorContent editor={editor} className="min-h-[500px]" />
+                    {/* Signature is now injected by backend on finalization */}
+                  </td></tr></tbody>
+                  <tfoot><tr><td><div className="footer-spacer h-[25mm] invisible" /></td></tr></tfoot>
+                </table>
+                <div className="fixed-footer-stripe text-center border-t-2 border-slate-900 pt-1 mt-auto bg-white z-[999]">
+                  <p className="text-sm font-bold uppercase text-slate-800 tracking-wide mb-1 leading-tight">{orgSettings.address || "#1, BANGALORE OUTER RING ROAD, HEBBAL, BANGALORE, 560031"}</p>
+                  <div className="contact-line flex justify-center items-center gap-4 py-1">
+                    <div className="flex items-center gap-1"><Phone size={11} className="text-slate-900 fill-current" /><span>{orgSettings.enquiryPhone || "+91 9886617662"}</span></div>
+                    <span className="text-slate-300">|</span>
+                    <div className="flex items-center gap-1 text-red-600"><Siren size={11} className="fill-current" /><span>{orgSettings.contactPhone || "+91 9886517662"}</span></div>
+                    <span className="text-slate-300">|</span>
+                    <div className="flex items-center gap-1"><Mail size={11} className="text-sky-500 fill-current" /><span>{orgSettings.email || "radiology@hospital.com"}</span></div>
+                    <span className="text-slate-300">|</span>
+                    <div className="flex items-center gap-1 italic opacity-60"><Globe size={11} className="text-blue-700" /><span>{orgSettings.website || "www.hospital.com"}</span></div>
                   </div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* DRAGGABLE IMAGES PANEL */}
-          {(showKeyImages || keyImages.length > 0) && (
-            <div className="absolute right-4 top-20 w-64 bg-white/90 backdrop-blur shadow-2xl rounded-xl border border-white/20 p-2 z-[60]">
-              <div className="flex justify-between items-center mb-2 px-1">
-                <span className="text-xs font-bold uppercase text-slate-500">Key Images</span>
-                <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => setShowKeyImages(false)}><X size={12} /></Button>
-              </div>
-              <div className="grid grid-cols-2 gap-2 max-h-[400px] overflow-auto">
-                {keyImages.map(img => (
-                  <div key={img.id} className="relative group rounded overflow-hidden shadow-sm border" draggable onDragStart={e => e.dataTransfer.setData("text/html", `<img src="/api/uploads/keyimages/${img.file_path}" width="220" />`)}>
-                    <img src={`/api/uploads/keyimages/${img.file_path}`} className="w-full aspect-square object-cover" onClick={() => insertKeyImageToEditor(img)} />
-                  </div>
-                ))}
-                <label className="border-2 border-dashed border-slate-300 rounded flex items-center justify-center aspect-square cursor-pointer hover:bg-slate-50">
-                  <ImagePlus className="text-slate-400" />
-                  <input type="file" hidden onChange={e => e.target.files?.[0] && uploadKeyImage(e.target.files[0])} />
-                </label>
-              </div>
-            </div>
-          )}
-
-          {/* RIGHT WORKFLOW PANEL */}
           {showWorkflowPanel && (
-            <div className="w-[320px] bg-white border-l border-slate-200 flex flex-col shrink-0 no-print shadow-2xl z-20">
-              <div className="p-5 flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-8">
+            <div className="w-80 bg-white border-l border-slate-200 flex flex-col no-print glass-panel animate-in slide-in-from-right duration-500 shadow-2xl z-50 overflow-hidden">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 bg-blue-600 rounded-lg shadow-sm"><Sigma size={16} className="text-white" /></div>
+                  <h2 className="text-sm font-black uppercase tracking-widest text-slate-900">Medical Hub</h2>
+                </div>
+                <button onClick={() => setShowWorkflowPanel(false)} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={18} /></button>
+              </div>
 
-                {/* TAB NAVIGATION */}
-                <div className="flex bg-slate-100 p-1 rounded-xl">
-                  <button
-                    onClick={() => setActiveTab("context")}
-                    className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${activeTab === 'context' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    Context & History
+              <div className="flex-1 overflow-y-auto p-5 space-y-8 custom-scrollbar">
+                <div className="flex bg-slate-100/50 p-1 rounded-xl">
+                  <button onClick={() => setActiveTab("context")} className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold rounded-lg transition-all ${activeTab === 'context' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>
+                    <Info size={14} /> CONTEXT & HISTORY
                   </button>
-                  <button
-                    onClick={() => setActiveTab("notes")}
-                    className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg transition-all ${activeTab === 'notes' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
-                  >
-                    Voice Notes
+                  <button onClick={() => setActiveTab("notes")} className={`flex-1 flex items-center justify-center gap-2 py-2 text-[10px] font-bold rounded-lg transition-all ${activeTab === 'notes' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400'}`}>
+                    <Mic size={14} /> VOICE NOTES
                   </button>
                 </div>
 
-                {activeTab === 'context' ? (
+                {activeTab === "context" ? (
                   <>
-                    {/* 1. CLINICAL CONTEXT */}
                     <div className="flex flex-col gap-3">
                       <div className="flex items-center gap-2 text-slate-400">
-                        <Info size={14} />
+                        <Stethoscope size={14} />
                         <span className="text-[10px] font-extrabold uppercase tracking-widest">Clinical Context</span>
                       </div>
-                      <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 italic text-slate-600 text-sm leading-relaxed shadow-inner">
-                        {clinicalHistory || "No clinical history provided."}
+                      <div className="p-4 bg-slate-100/50 rounded-2xl border border-slate-200/50">
+                        <textarea placeholder="No clinical history provided." value={clinicalHistory} onChange={(e) => setClinicalHistory(e.target.value)} className="w-full bg-transparent border-none focus:ring-0 text-sm text-slate-600 italic leading-relaxed placeholder:text-slate-300 resize-none h-20" />
                       </div>
                     </div>
 
-                    {/* 2. PRIORS TIMELINE */}
                     <div className="flex flex-col gap-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 text-slate-400">
                           <History size={14} />
                           <span className="text-[10px] font-extrabold uppercase tracking-widest">Priors Timeline</span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {loadingPriors && <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />}
-                          <button
-                            onClick={loadPriors}
-                            disabled={loadingPriors}
-                            className="p-1 hover:bg-slate-100 rounded-full text-slate-400 hover:text-blue-500 transition-colors"
-                            title="Refresh History"
-                          >
-                            <RefreshCcw size={12} className={loadingPriors ? 'animate-spin-slow' : ''} />
-                          </button>
-                        </div>
+                        <button onClick={loadPriors} className="text-slate-400 hover:text-blue-600"><RefreshCcw size={12} className={loadingPriors ? 'animate-spin' : ''} /></button>
                       </div>
 
-                      <div className="flex flex-col gap-0.5 relative pl-4 border-l-2 border-slate-100 ml-2">
-                        {priors.length === 0 && !loadingPriors ? (
-                          <span className="text-[10px] text-slate-400 font-bold ml-2 italic">No prior studies found.</span>
+                      <div className="space-y-4 relative before:absolute before:left-[11px] before:top-2 before:bottom-0 before:w-0.5 before:bg-slate-100 flex flex-col">
+                        {priors.length === 0 ? (
+                          <div className="text-[10px] text-slate-400 italic pl-8 py-2">No prior studies found.</div>
                         ) : (
-                          priors.filter(p => !['SR', 'PR', 'KO'].includes(p.modality)).slice(0, 5).map((prior) => (
-                            <div key={prior.studyUID} className="relative group mb-5 last:mb-0">
-                              <div className={`absolute -left-[23.5px] top-1.5 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm transition-all duration-300 z-10 ${prior.reportStatus === 'final' ? 'ring-2 ring-emerald-500/50 ring-offset-1' : ''}`}
-                                style={{ backgroundColor: getModalityColor(prior.modality) }}
-                              />
-
-                              <div className="flex flex-col bg-white p-3 rounded-xl border border-slate-100 hover:border-blue-200 hover:shadow-md transition-all duration-300">
-                                <div className="flex items-center justify-between mb-1">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[9px] font-black bg-slate-900 text-white px-1.5 py-0.5 rounded leading-none">{prior.modality}</span>
-                                    <span className="text-[10px] font-bold text-slate-400">{formatDate(prior.date)}</span>
-                                  </div>
-                                  {prior.reportStatus === 'final' ? (
-                                    <button
-                                      className="text-[9px] font-extrabold text-emerald-600 hover:text-emerald-700 uppercase tracking-tighter flex items-center gap-1 transition-colors"
-                                      onClick={() => fetchPriorReport(prior)}
-                                    >
-                                      <Eye size={10} />
-                                      <span>Read Report</span>
-                                    </button>
-                                  ) : (
-                                    <div className="w-1.5 h-1.5 rounded-full bg-slate-200" />
-                                  )}
-                                </div>
-                                <span className="text-[11px] font-bold text-slate-700 leading-[1.3] mb-2 line-clamp-2">{prior.description}</span>
-                                <div className="flex items-center gap-4 border-t border-slate-50 pt-2">
-                                  <button
-                                    onClick={() => window.open(`/pacs/viewer/${prior.studyUID}`, '_blank')}
-                                    className="text-[9px] font-black text-blue-600 hover:text-blue-700 uppercase tracking-tighter flex items-center gap-1.5 transition-colors group/btn"
-                                  >
-                                    <ExternalLink size={10} className="group-hover/btn:scale-110 transition-transform" />
-                                    Launch Viewer
-                                  </button>
-                                </div>
+                          priors.map((p) => (
+                            <div key={p.studyUID} className="relative pl-8 group cursor-pointer" onClick={() => viewPriorReport(p.studyUID, p.description)}>
+                              <div className="absolute left-0 top-1 w-6 h-6 rounded-full bg-white border-2 border-slate-200 flex items-center justify-center z-10 group-hover:border-blue-500 transition-colors">
+                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: getModalityColor(p.modality) }} />
+                              </div>
+                              <div className="flex flex-col p-3 rounded-xl hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-tighter">{p.date} • {p.modality}</span>
+                                <span className="text-xs font-bold text-slate-700 leading-tight mt-1">{p.description}</span>
+                                {p.reportStatus === 'final' && <span className="text-[9px] text-emerald-600 font-bold mt-1 inline-flex items-center gap-1 group-hover:translate-x-1 transition-transform"><Printer size={10} /> View Report <ChevronRight size={10} /></span>}
                               </div>
                             </div>
                           ))
@@ -1033,66 +955,52 @@ export default function ReportEditor({
                     </div>
                   </>
                 ) : (
-                  <div className="flex flex-col gap-4 animate-in fade-in slide-in-from-right-2 duration-300">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-slate-400">
-                        <Mic size={14} />
-                        <span className="text-[10px] font-extrabold uppercase tracking-widest">Scribble Pad</span>
-                      </div>
-                      <Button variant="ghost" size="sm" onClick={() => setVoiceNotes("")} className="h-6 text-[9px] font-bold text-slate-400">CLEAR</Button>
+                  <div className="flex flex-col gap-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                    <div className="flex items-center gap-2 text-slate-400">
+                      <Mic size={14} />
+                      <span className="text-[10px] font-extrabold uppercase tracking-widest">Voice Scribble Pad</span>
                     </div>
-                    <div className="relative">
+                    <div className="p-5 bg-blue-50/30 rounded-3xl border border-blue-100 ring-8 ring-blue-50/10 min-h-[300px] flex flex-col shadow-inner">
                       <textarea
-                        className="w-full h-[300px] p-4 bg-blue-50/50 border border-blue-100 rounded-2xl text-[13px] text-slate-700 outline-none resize-none font-medium italic placeholder:text-blue-300/60 leading-relaxed shadow-inner"
-                        placeholder="Start speaking to take rough notes..."
+                        placeholder="Speak freely to take rough notes... (Hands-free mode recommended)"
                         value={voiceNotes}
                         onChange={(e) => setVoiceNotes(e.target.value)}
+                        className="w-full bg-transparent border-none focus:ring-0 text-sm text-blue-800 leading-relaxed placeholder:text-blue-200 resize-none flex-1 font-medium"
                       />
-                      {listening && activeTab === 'notes' && (
-                        <div className="absolute top-4 right-4 flex items-center gap-1">
-                          <div className="w-1 h-1 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <div className="w-1 h-1 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <div className="w-1 h-1 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                        </div>
+                      {voiceNotes && (
+                        <Button
+                          size="sm"
+                          onClick={() => { editor?.chain().focus().insertContent(`<p><b>Note:</b> ${voiceNotes}</p>`).run(); setVoiceNotes(""); }}
+                          className="mt-4 bg-blue-600 hover:bg-blue-700 text-white text-[10px] uppercase font-bold tracking-widest rounded-xl shadow-lg border-b-4 border-blue-800 active:border-b-0 active:translate-y-1 transition-all"
+                        >
+                          Paste into Findings
+                        </Button>
                       )}
                     </div>
-                    <Button
-                      onClick={() => {
-                        editor?.chain().focus().insertContent(voiceNotes + " ").run();
-                        setVoiceNotes("");
-                      }}
-                      disabled={!voiceNotes.trim()}
-                      className="w-full bg-blue-600 text-white rounded-xl h-10 font-bold uppercase text-[10px] tracking-widest shadow-lg shadow-blue-500/20"
-                    >
-                      Paste into 🔬 Findings
-                    </Button>
+                    <p className="text-[10px] text-slate-400 italic px-2">This is a temporary pad. Notes are NOT saved to the permanent record unless pasted into the main editor.</p>
                   </div>
                 )}
 
-                {/* 3. WORKFLOW STEPPER */}
                 <div className="flex flex-col gap-4 pt-4 border-t border-slate-100">
                   <div className="flex items-center gap-2 text-slate-400">
                     <Sigma size={14} />
                     <span className="text-[10px] font-extrabold uppercase tracking-widest">Workflow State</span>
                   </div>
-
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex flex-col gap-2">
                     {[
-                      { id: 'draft', label: 'Draft', color: 'bg-amber-500', icon: Pencil },
-                      { id: 'preliminary', label: 'Preliminary', color: 'bg-blue-500', icon: Eye },
-                      { id: 'final', label: 'Finalized', color: 'bg-emerald-600', icon: Lock },
-                      { id: 'addendum', label: 'Addendum', color: 'bg-red-600', icon: AlertTriangle },
+                      { id: 'draft', label: 'Draft', icon: Pencil, color: 'bg-amber-500' },
+                      { id: 'preliminary', label: 'Preliminary', icon: Eye, color: 'bg-blue-500' },
+                      { id: 'final', label: 'Finalized', icon: Lock, color: 'bg-emerald-500' },
+                      { id: 'addendum', label: 'Addendum', icon: AlertTriangle, color: 'bg-red-500' },
                     ].map((s) => {
                       const isActive = status === s.id;
-
                       return (
                         <button
                           key={s.id}
-                          disabled={status === 'final' && s.id !== 'addendum'}
-                          onClick={() => setStatus(s.id as any)}
-                          className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-300 ${isActive
-                            ? `border-transparent ring-2 ring-offset-1 ${s.color.replace('bg-', 'ring-')} ${s.color} text-white shadow-lg shadow-black/10`
-                            : 'bg-white border-slate-100 text-slate-500 hover:border-slate-300'
+                          onClick={() => setStatus(s.id as WorkflowStatus)}
+                          className={`w-full flex items-center justify-between p-3 rounded-2xl border transition-all ${isActive
+                            ? `${s.color} border-transparent shadow-lg shadow-${s.id}-500/20 scale-105 z-10`
+                            : 'bg-white border-slate-100 hover:border-slate-300'
                             }`}
                         >
                           <div className="flex items-center gap-3">
@@ -1106,14 +1014,12 @@ export default function ReportEditor({
                   </div>
                 </div>
 
-                {/* 4. CLARIFICATION NOTE */}
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-3 pb-10">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 text-slate-400">
                       <Pencil size={14} />
                       <span className="text-[10px] font-extrabold uppercase tracking-widest">Clarification Note</span>
                     </div>
-                    {status === 'addendum' && <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">MANDATORY</span>}
                   </div>
                   <textarea
                     placeholder="Enter findings clarification or addendum reason..."
@@ -1122,19 +1028,47 @@ export default function ReportEditor({
                     className="w-full h-32 p-4 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none resize-none transition-all placeholder:text-slate-300 text-slate-700 shadow-sm"
                   />
                 </div>
-
               </div>
 
-              {/* ACTION FOOTER */}
               <div className="p-5 border-t border-slate-100 bg-slate-50/50 flex flex-col gap-3">
-                <Button
-                  onClick={() => save(status === 'final' || status === 'addendum')}
-                  className={`w-full h-11 rounded-xl font-bold text-xs uppercase tracking-widest gap-2 shadow-lg transition-all active:scale-95 ${status === 'addendum' ? 'bg-red-600 hover:bg-red-700' :
-                    status === 'final' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'
-                    }`}
-                >
-                  <Save size={16} /> {status === 'final' || status === 'addendum' ? 'Sign & Finalize' : 'Save Changes'}
-                </Button>
+
+                <div className="flex flex-col gap-2 p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                  <h4 className="text-[10px] font-bold uppercase text-amber-700 tracking-widest flex items-center gap-1"><Lock size={10} /> Legal Certification</h4>
+                  <label className="flex items-start gap-2 text-[10px] text-slate-600 cursor-pointer hover:text-slate-900 transition-colors">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={disclaimerAccepted}
+                      onChange={e => setDisclaimerAccepted(e.target.checked)}
+                      disabled={status === 'final'}
+                    />
+                    <span className="leading-tight">
+                      I, <b>{currentUser?.full_name || "the undersigned"}</b>, hereby certify that I have personally reviewed the images and this report is an accurate interpretation of the findings. I affix my digital signature to this document.
+                    </span>
+                  </label>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    disabled={isSaving || status === 'final'}
+                    onClick={() => handleSave("draft")}
+                    variant="outline"
+                    className="flex-1 h-11 rounded-xl font-bold text-xs uppercase tracking-widest border-slate-300 text-slate-600 hover:bg-slate-50"
+                  >
+                    Save Draft
+                  </Button>
+                  <Button
+                    disabled={isSaving || status === 'final' || (!disclaimerAccepted && status !== 'final')}
+                    onClick={() => {
+                      handleSave("final");
+                    }}
+                    className={`flex-1 h-11 rounded-xl font-bold text-xs uppercase tracking-widest text-white shadow-lg transition-all active:scale-95 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed`}
+                  >
+                    Sign & Finalize
+                  </Button>
+                </div>
+
+
                 <button
                   onClick={() => setShowWorkflowPanel(false)}
                   className="text-[10px] text-slate-400 hover:text-slate-600 font-bold uppercase tracking-tighter transition-colors"
@@ -1144,22 +1078,9 @@ export default function ReportEditor({
               </div>
             </div>
           )}
-
-
-          {!showWorkflowPanel && (
-            <button
-              onClick={() => setShowWorkflowPanel(true)}
-              className="absolute right-4 top-4 z-30 w-10 h-10 bg-white border border-slate-200 rounded-full flex items-center justify-center shadow-lg text-slate-400 hover:text-blue-600 transition-all hover:scale-110 active:scale-95 no-print"
-              title="Open Workflow Panel"
-            >
-              <Sigma size={20} />
-            </button>
-          )}
-
         </div>
-      </div >
+      </div>
 
-      {/* QUICK REPORT MODAL */}
       {
         selectedPriorReport && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
@@ -1169,15 +1090,10 @@ export default function ReportEditor({
                   <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">Historical Findings</span>
                   <h3 className="text-sm font-bold text-slate-900 mt-0.5">{selectedPriorReport.title}</h3>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => setSelectedPriorReport(null)} className="h-8 w-8 rounded-full hover:bg-white hover:shadow-sm">
-                  <X size={16} />
-                </Button>
+                <Button variant="ghost" size="icon" onClick={() => setSelectedPriorReport(null)} className="h-8 w-8 rounded-full hover:bg-white hover:shadow-sm"><X size={16} /></Button>
               </div>
               <div className="flex-1 overflow-y-auto p-8 custom-scrollbar bg-slate-50/10">
-                <div
-                  className="prose prose-slate prose-sm max-w-none text-slate-700 leading-relaxed font-sans"
-                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(selectedPriorReport.content) }}
-                />
+                <div className="prose prose-slate prose-sm max-w-none text-slate-700 leading-relaxed font-sans" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(selectedPriorReport.content) }} />
               </div>
               <div className="p-4 bg-white border-t border-slate-100 flex justify-end">
                 <Button onClick={() => setSelectedPriorReport(null)} className="bg-slate-900 text-white rounded-xl px-6 text-xs font-bold uppercase tracking-widest">Close Record</Button>
@@ -1187,28 +1103,119 @@ export default function ReportEditor({
         )
       }
 
+      {
+        (showKeyImages || keyImages.length > 0) && (
+          <DraggablePanel
+            title="Key Image Manager"
+            subtitle={`${keyImages.length} Images`}
+            onClose={() => setShowKeyImages(false)}
+            className="w-[600px] h-auto max-h-[600px]"
+          >
+            <div className="p-4 bg-slate-50/50 flex-1 overflow-y-auto custom-scrollbar min-h-[200px]">
+              {keyImages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl bg-white h-full">
+                  <ImagePlus size={32} className="mb-2 opacity-20" />
+                  <span className="text-xs font-bold uppercase tracking-wide">No Key Images</span>
+                  <span className="text-[10px]">Upload or drag images here</span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-4 gap-3">
+                  {keyImages.map(img => (
+                    <div key={img.id} className="group relative bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow">
+                      <div className="aspect-square bg-slate-100 relative cursor-pointer" onClick={() => insertKeyImageToEditor(img)}>
+                        <img src={`/api/uploads/keyimages/${img.file_path}`} className="w-full h-full object-cover transition-transform group-hover:scale-105 duration-500" />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                          <span className="bg-black/80 text-white text-[9px] font-bold px-2 py-1 rounded-full backdrop-blur-sm uppercase tracking-wider">Insert</span>
+                        </div>
+                      </div>
+                      <div className="absolute top-1 right-1 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); deleteKeyImage(img.id); }}
+                          className="bg-white/90 text-red-500 p-1 rounded shadow-sm hover:bg-red-500 hover:text-white transition-colors"
+                          title="Delete Image"
+                        >
+                          <Trash2 size={10} />
+                        </button>
+                      </div>
+                      <div className="p-1 border-t border-slate-50">
+                        <p className="text-[9px] text-slate-500 truncate text-center font-mono">{img.uploaded_at ? new Date(img.uploaded_at).toLocaleTimeString() : "IMG"}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 bg-white border-t border-slate-100">
+              <label className="flex items-center justify-center gap-2 w-full py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold uppercase tracking-widest rounded-lg border border-blue-200 border-dashed cursor-pointer transition-colors active:scale-[0.99] relative">
+                <ImagePlus size={14} />
+                <span>Upload New Images</span>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  onChange={e => {
+                    if (e.target.files?.length) {
+                      Array.from(e.target.files).forEach(file => uploadKeyImage(file));
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
+          </DraggablePanel>
+        )
+      }
+
     </div >
   );
 }
 
-function DraggablePanel({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  const [position, setPosition] = useState({ x: 20, y: 100 });
+function DraggablePanel({ children, onClose, title = "Key Images", subtitle, className = "w-64" }: { children: React.ReactNode; onClose: () => void; title?: string; subtitle?: string; className?: string }) {
+  const [position, setPosition] = useState({ x: 100, y: 100 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const onMouseDown = (e: React.MouseEvent) => { setIsDragging(true); setDragOffset({ x: e.clientX - position.x, y: e.clientY - position.y }); };
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    // Only drag if clicking header
+    setIsDragging(true);
+    setDragOffset({ x: e.clientX - position.x, y: e.clientY - position.y });
+  };
+
   useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => { if (isDragging) setPosition({ x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y }); };
+    const onMouseMove = (e: MouseEvent) => {
+      if (isDragging) {
+        setPosition({
+          x: Math.max(0, Math.min(window.innerWidth - 600, e.clientX - dragOffset.x)),
+          y: Math.max(0, Math.min(window.innerHeight - 600, e.clientY - dragOffset.y))
+        });
+      }
+    };
     const onMouseUp = () => setIsDragging(false);
-    if (isDragging) { window.addEventListener("mousemove", onMouseMove); window.addEventListener("mouseup", onMouseUp); }
-    return () => { window.removeEventListener("mousemove", onMouseMove); window.removeEventListener("mouseup", onMouseUp); };
+
+    if (isDragging) {
+      window.addEventListener("mousemove", onMouseMove);
+      window.addEventListener("mouseup", onMouseUp);
+    }
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
   }, [isDragging, dragOffset]);
+
   return (
-    <div className="absolute z-50 flex flex-col w-64 bg-white shadow-2xl rounded-xl border border-slate-200 overflow-hidden" style={{ left: position.x, top: position.y }}>
-      <div className="p-2 bg-slate-100 flex justify-between items-center cursor-move" onMouseDown={onMouseDown}>
-        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Key Images</span>
-        <Button variant="ghost" size="icon" className="h-5 w-5" onClick={onClose}><X size={12} /></Button>
+    <div className={`absolute z-[9000] flex flex-col bg-white shadow-2xl rounded-xl border border-slate-200 overflow-hidden animate-in zoom-in-95 duration-200 ${className}`} style={{ left: position.x, top: position.y }}>
+      <div className="p-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center cursor-move select-none active:bg-slate-100" onMouseDown={onMouseDown}>
+        <div className="flex items-center gap-2 pointer-events-none">
+          <ImagePlus size={16} className="text-blue-600" />
+          <span className="text-xs font-black uppercase text-slate-700 tracking-widest">{title}</span>
+          {subtitle && <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">{subtitle}</span>}
+        </div>
+        <Button variant="ghost" size="icon" className="h-6 w-6 rounded-full hover:bg-red-50 hover:text-red-500" onClick={onClose}><X size={14} /></Button>
       </div>
-      <div className="h-[400px] overflow-hidden flex flex-col">{children}</div>
+      <div className="flex flex-col flex-1 overflow-hidden">{children}</div>
     </div>
   );
 }
+

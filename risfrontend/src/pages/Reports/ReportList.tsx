@@ -16,8 +16,14 @@ import {
   ChevronRight,
   FileCheck,
   FileClock,
-  Trash2
+  Trash2,
+  Server,
+  Mail,
+  MessageSquare,
+  Phone
 } from "lucide-react";
+// @ts-ignore
+import html2pdf from "html2pdf.js";
 
 // Types
 type ReportRow = {
@@ -31,7 +37,7 @@ type ReportRow = {
   status?: string;
 };
 
-export default function ReportList(): JSX.Element {
+export default function ReportList(): React.ReactElement {
   const [list, setList] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -122,6 +128,108 @@ export default function ReportList(): JSX.Element {
   const handleNewReport = () => {
     // Redirect to PACS for proper study selection
     navigate('/pacs');
+  };
+
+  // --- PDF Generation Helper (Hidden Render) ---
+  const generatePdfFromReport = async (reportData: any) => {
+    // Create a temporary container
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.top = '-9999px';
+    container.style.width = '210mm'; // A4 width
+    container.className = 'printable-area'; // Reuse existing styles if possible or inline minimal styles
+
+    // Minimal HTML structure replicating ReportEditor style for PDF
+    container.innerHTML = `
+      <div style="padding: 20px; font-family: sans-serif; background: white;">
+        <h1 style="text-align: center; font-size: 24px; font-weight: bold; text-transform: uppercase;">RADIOLOGY REPORT</h1>
+        <div style="margin: 20px 0; border-bottom: 2px solid #333;"></div>
+        <table style="width: 100%; margin-bottom: 20px;">
+          <tr><td><b>Patient:</b> ${reportData.patientName}</td><td><b>ID:</b> ${reportData.patientID}</td></tr>
+          <tr><td><b>Age/Sex:</b> ${reportData.patientAge}/${reportData.patientSex || '-'}</td><td><b>Date:</b> ${reportData.studyDate}</td></tr>
+          <tr><td><b>Modality:</b> ${reportData.modality}</td><td><b>Accession:</b> ${reportData.accessionNumber}</td></tr>
+        </table>
+        <div style="margin-top: 20px;">
+          ${reportData.content || "<p>No content.</p>"}
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(container);
+
+    try {
+      const opt = {
+        margin: 10,
+        filename: 'report.pdf',
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+      // @ts-ignore
+      const pdfBlob = await html2pdf().from(container).set(opt).outputPdf('blob');
+      return pdfBlob;
+    } finally {
+      document.body.removeChild(container);
+    }
+  };
+
+  const handleShare = async (row: ReportRow, type: 'email' | 'sms' | 'pacs' | 'whatsapp') => {
+    if (!row.studyUID) return;
+
+    // Quick confirm
+    if (type !== 'pacs') {
+      const promptLabel = type === 'email' ? 'Email' : (type === 'sms' ? 'Mobile Number' : 'WhatsApp Number');
+      const recipient = prompt(`Enter ${promptLabel}:`);
+      if (!recipient) return;
+      // Store temporarily to pass to backend
+      (row as any)._tempRecipient = recipient;
+    } else {
+      if (!window.confirm("Send this report to PACS?")) return;
+    }
+
+    try {
+      // 1. Fetch full report content
+      const { data } = await axiosInstance.get(`/reports/${row.studyUID}`);
+      const fullReport = data?.data || data;
+
+      if (!fullReport) throw new Error("Report data not found");
+
+      // 2. Generate PDF
+      const pdfBlob = await generatePdfFromReport(fullReport);
+
+      // 3. Send
+      const fd = new FormData();
+      fd.append("pdf", pdfBlob, "report.pdf");
+
+      if (type === 'pacs') {
+        fd.append("metadata", JSON.stringify({
+          PatientName: fullReport.patientName,
+          PatientID: fullReport.patientID,
+          AccessionNumber: fullReport.accessionNumber,
+          StudyDate: fullReport.studyDate,
+          Modality: fullReport.modality
+        }));
+        await axiosInstance.post('/dicom/export-pdf', fd);
+        alert("Sent to PACS successfully!");
+      } else {
+        fd.append("type", type);
+        fd.append("recipient", (row as any)._tempRecipient);
+        // Pass Metadata for Professional Email/SMS Content
+        fd.append("metadata", JSON.stringify({
+          patientName: fullReport.patientName,
+          accessionNumber: fullReport.accessionNumber,
+          studyDate: fullReport.studyDate,
+          hospitalName: "CAPRICORN HOSPITALS" // Should ideally come from settings but hardcoded for now in List View
+        }));
+
+        await axiosInstance.post('/share/patient-report', fd);
+        alert(`${type === 'email' ? 'Email' : (type === 'sms' ? 'SMS' : 'WhatsApp')} sent successfully!`);
+      }
+
+    } catch (err: any) {
+      console.error(err);
+      alert("Action failed: " + (err.response?.data?.message || err.message));
+    }
   };
 
   return (
@@ -221,6 +329,16 @@ export default function ReportList(): JSX.Element {
                   </td>
                   <td className="px-6 py-3 text-right">
                     <div className="flex justify-end gap-1">
+                      {r.status === 'final' && (
+                        <>
+                          <Button size="sm" variant="ghost" className="text-slate-500 hover:text-blue-600" onClick={() => handleShare(r, 'pacs')} title="Send to PACS"><Server size={14} /></Button>
+                          <Button size="sm" variant="ghost" className="text-slate-500 hover:text-emerald-600" onClick={() => handleShare(r, 'email')} title="Email"><Mail size={14} /></Button>
+                          <Button size="sm" variant="ghost" className="text-slate-500 hover:text-purple-600" onClick={() => handleShare(r, 'sms')} title="SMS"><MessageSquare size={14} /></Button>
+                          <Button size="sm" variant="ghost" className="text-slate-500 hover:text-green-600" onClick={() => handleShare(r, 'whatsapp')} title="WhatsApp"><Phone size={14} /></Button>
+                          <div className="w-[1px] bg-slate-200 mx-1" />
+                        </>
+                      )}
+
                       <Button
                         size="sm"
                         variant="ghost"
@@ -229,6 +347,7 @@ export default function ReportList(): JSX.Element {
                       >
                         {(r.status === 'final') ? "View" : "Edit"}
                       </Button>
+
                       {isAdmin && (
                         <Button
                           size="sm"

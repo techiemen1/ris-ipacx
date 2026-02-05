@@ -116,6 +116,8 @@ const UserManagement: React.FC = () => {
         can_report: Boolean(form.can_report),
         can_schedule: Boolean(form.can_schedule),
         is_active: Boolean(form.is_active),
+        designation: (form as any).designation || null,
+        registration_number: (form as any).registration_number || null,
       };
 
       // Only include password for create or when user typed a new password
@@ -186,6 +188,32 @@ const UserManagement: React.FC = () => {
     }
   };
 
+  const [signatureLoading, setSignatureLoading] = useState(false);
+
+  const handleSignatureUpload = async (file?: File) => {
+    if (!file || !form.id) {
+      setMessage("⚠️ Select a user first to upload signature.");
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append("signature", file);
+
+    try {
+      setSignatureLoading(true);
+      await axiosInstance.post(`/users/${form.id}/signature`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setMessage("✅ Signature uploaded.");
+      fetchUsers();
+    } catch (err: any) {
+      console.error("signature upload", err);
+      setMessage(`❌ Failed to upload signature: ${err.response?.data?.error || err.message}`);
+    } finally {
+      setSignatureLoading(false);
+    }
+  };
+
   // If not admin, show a message (hooks already called)
   if (!currentUser || currentUser.role !== "admin") {
     return (
@@ -224,8 +252,18 @@ const UserManagement: React.FC = () => {
               <option value="radiologist">radiologist</option>
               <option value="technician">technician</option>
               <option value="staff">staff</option>
+              <option value="doctor">doctor</option>
+              <option value="nurse">nurse</option>
+              <option value="receptionist">receptionist</option>
             </select>
             <Input placeholder="NPI Number" value={form.npi_number} onChange={(e) => setForm({ ...form, npi_number: e.target.value })} />
+
+            {/* Professional Details for Signature */}
+            <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-4 mt-2">
+              <h4 className="md:col-span-2 text-sm font-bold text-gray-500 uppercase">Professional Details (For Digital Signature)</h4>
+              <Input placeholder="Designation (e.g. Consultant Radiologist)" value={(form as any).designation || ""} onChange={(e) => setForm({ ...form, designation: e.target.value } as any)} />
+              <Input placeholder="Registration Number (e.g. KMC-12345)" value={(form as any).registration_number || ""} onChange={(e) => setForm({ ...form, registration_number: e.target.value } as any)} />
+            </div>
 
             <select
               value={form.department}
@@ -241,7 +279,7 @@ const UserManagement: React.FC = () => {
               onChange={(e) => setForm({ ...form, specialty: e.target.value })}
               className="border rounded px-3 py-2 text-sm bg-white"
             >
-              <option value="">Select Designation...</option>
+              <option value="">Select Specialty...</option>
               {designations.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
 
@@ -251,36 +289,52 @@ const UserManagement: React.FC = () => {
             <Input placeholder="Language Preference" value={form.language_preference} onChange={(e) => setForm({ ...form, language_preference: e.target.value })} />
             <Input placeholder="Timezone" value={form.timezone} onChange={(e) => setForm({ ...form, timezone: e.target.value })} />
 
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={form.can_order} onChange={(e) => setForm({ ...form, can_order: e.target.checked })} />
-              Can Order
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={form.can_report} onChange={(e) => setForm({ ...form, can_report: e.target.checked })} />
-              Can Report
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={form.can_schedule} onChange={(e) => setForm({ ...form, can_schedule: e.target.checked })} />
-              Can Schedule
-            </label>
-            <select value={form.is_active ? "true" : "false"} onChange={(e) => setForm({ ...form, is_active: e.target.value === "true" })} className="border rounded px-3 py-2 text-sm bg-white">
-              <option value="true">Active</option>
-              <option value="false">Inactive</option>
-            </select>
-            <input type="file" accept="image/*" onChange={(e) => handleAvatarUpload(e.target.files?.[0])} />
+            <div className="md:col-span-3 flex gap-6 items-center border-t pt-4">
+              <label className="flex items-center gap-2 border p-2 rounded hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" checked={form.can_order} onChange={(e) => setForm({ ...form, can_order: e.target.checked })} />
+                Can Order
+              </label>
+              <label className="flex items-center gap-2 border p-2 rounded hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" checked={form.can_report} onChange={(e) => setForm({ ...form, can_report: e.target.checked })} />
+                Can Report
+              </label>
+              <label className="flex items-center gap-2 border p-2 rounded hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" checked={form.can_schedule} onChange={(e) => setForm({ ...form, can_schedule: e.target.checked })} />
+                Can Schedule
+              </label>
+              <select value={form.is_active ? "true" : "false"} onChange={(e) => setForm({ ...form, is_active: e.target.value === "true" })} className="border rounded px-3 py-2 text-sm bg-white">
+                <option value="true">Active</option>
+                <option value="false">Inactive</option>
+              </select>
+            </div>
+
+            <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-6 border-t pt-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Avatar Update</label>
+                <input type="file" accept="image/*" onChange={(e) => handleAvatarUpload(e.target.files?.[0])} className="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Digital Signature Update</label>
+                <div className="flex items-center gap-2">
+                  <input type="file" accept="image/png, image/jpeg" onChange={(e) => handleSignatureUpload(e.target.files?.[0])} disabled={signatureLoading} className="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 disabled:opacity-50" />
+                  {signatureLoading && <span className="animate-spin text-blue-600">⟳</span>}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1">Upload transparent PNG of scanned signature. Will be used for final reports.</p>
+              </div>
+            </div>
           </div>
 
           <div className="flex gap-3 mt-4">
-            <Button onClick={saveUser}>{form.id ? "Update" : "Create"}</Button>
+            <Button onClick={saveUser}>{form.id ? "Update User" : "Create User"}</Button>
             {form.id && (
               <Button variant="secondary" onClick={() => setForm({ ...defaultForm })}>
-                Cancel
+                Cancel (Clear Form)
               </Button>
             )}
           </div>
 
           {message && (
-            <p className="mt-3 text-sm text-blue-700 bg-blue-50 p-2 rounded">{message}</p>
+            <p className="mt-3 text-sm text-blue-700 bg-blue-50 p-2 rounded animate-in fade-in">{message}</p>
           )}
         </CardContent>
       </Card>
@@ -290,43 +344,52 @@ const UserManagement: React.FC = () => {
           <CardTitle>All Users</CardTitle>
         </CardHeader>
         <CardContent>
-          <table className="w-full border-collapse border text-sm">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="border px-2 py-1">Avatar</th>
-                <th className="border px-2 py-1">Username</th>
-                <th className="border px-2 py-1">Full Name</th>
-                <th className="border px-2 py-1">Email</th>
-                <th className="border px-2 py-1">Role</th>
-                <th className="border px-2 py-1">Dept</th>
-                <th className="border px-2 py-1">Status</th>
-                <th className="border px-2 py-1">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id}>
-                  <td className="border px-2 py-1">
-                    {u.profile_picture ? (
-                      <img src={u.profile_picture} alt="avatar" className="h-8 w-8 rounded-full object-cover" />
-                    ) : (
-                      <span className="text-xs text-gray-500">No avatar</span>
-                    )}
-                  </td>
-                  <td className="border px-2 py-1">{u.username}</td>
-                  <td className="border px-2 py-1">{u.full_name}</td>
-                  <td className="border px-2 py-1">{u.email}</td>
-                  <td className="border px-2 py-1">{u.role}</td>
-                  <td className="border px-2 py-1 text-xs">{(u as any).department || '-'}</td>
-                  <td className="border px-2 py-1">{u.is_active ? "Active" : "Inactive"}</td>
-                  <td className="border px-2 py-1 space-x-2">
-                    <Button size="sm" onClick={() => editUser(u)}>Edit</Button>
-                    <Button size="sm" variant="destructive" onClick={() => deleteUser(u.id)}>Delete</Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse border text-sm">
+              <thead className="bg-gray-100">
+                <tr>
+                  <th className="border px-2 py-1">Profile</th>
+                  <th className="border px-2 py-1">Username</th>
+                  <th className="border px-2 py-1">Details</th>
+                  <th className="border px-2 py-1">Role / Dept</th>
+                  <th className="border px-2 py-1">Signature</th>
+                  <th className="border px-2 py-1">Status</th>
+                  <th className="border px-2 py-1">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id} className="hover:bg-gray-50">
+                    <td className="border px-2 py-1 text-center">
+                      {u.profile_picture ? (
+                        <img src={u.profile_picture} alt="avatar" className="h-8 w-8 rounded-full object-cover mx-auto" />
+                      ) : (
+                        <div className="h-8 w-8 rounded-full bg-gray-200 mx-auto flex items-center justify-center text-xs text-gray-500">?</div>
+                      )}
+                    </td>
+                    <td className="border px-2 py-1 font-medium">{u.username}</td>
+                    <td className="border px-2 py-1">
+                      <div className="font-bold">{u.full_name}</div>
+                      <div className="text-xs text-gray-500">{u.email}</div>
+                    </td>
+                    <td className="border px-2 py-1">
+                      <div className="bg-slate-100 px-1 rounded inline-block text-xs font-mono">{u.role}</div>
+                      <div className="text-xs text-gray-400">{(u as any).department || '-'}</div>
+                    </td>
+                    <td className="border px-2 py-1 text-center">
+                      {(u as any).signature_path ? <span title="Signature Uploaded">✅</span> : <span className="text-gray-300" title="No Signature">❌</span>}
+                      {(u as any).registration_number && <div className="text-[9px] text-gray-500 mt-1">{(u as any).registration_number}</div>}
+                    </td>
+                    <td className="border px-2 py-1">{u.is_active ? <span className="text-green-600 font-bold text-xs">Active</span> : <span className="text-red-400 text-xs">Inactive</span>}</td>
+                    <td className="border px-2 py-1 space-x-2">
+                      <Button size="sm" variant="outline" onClick={() => editUser(u)}>Edit</Button>
+                      <Button size="sm" variant="destructive" onClick={() => deleteUser(u.id)}>Del</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </CardContent>
       </Card>
     </div>

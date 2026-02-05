@@ -215,23 +215,117 @@ exports.saveReportUpsert = async (req, res) => {
    FINALIZE REPORT
    ⚠️ LEGALLY IMMUTABLE
 ========================================================= */
+/* =========================================================
+   FINALIZE REPORT
+   ⚠️ LEGALLY IMMUTABLE
+========================================================= */
+const crypto = require('crypto');
+
+// Generate a simpler keypair for demonstration if not provided via ENV
+// In production, these should be loaded from secure storage (HSM/Vault)
+const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+});
+
 exports.finalizeReport = async (req, res) => {
-  const { studyUID, content } = req.body;
+  const { studyUID, content, disclaimer_accepted } = req.body;
+  const userId = req.user.id;
+  const userRole = req.user.role;
 
   try {
+    // 1. Role Enforcement: Only Radiologists (and Admins for override) can sign
+    // 'doctor' role is often used for referring physicians, so be specific to 'radiologist'
+    if (userRole !== 'radiologist' && userRole !== 'admin') {
+      return res.status(403).json({ success: false, message: "Only Radiologists can finalize reports." });
+    }
+
+    // 2. Legal Consent Check
+    if (!disclaimer_accepted) {
+      return res.status(400).json({ success: false, message: "Legal disclaimer must be accepted." });
+    }
+
+    // 3. Fetch signing user details
+    const userResult = await pool.query(
+      "SELECT full_name, designation, registration_number, signature_path FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userResult.rowCount === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const user = userResult.rows[0];
+
+    // 4. Check for existing Final status (Immutability Check)
+    const statusCheck = await pool.query("SELECT status FROM pacs_reports WHERE study_instance_uid = $1", [studyUID]);
+    if (statusCheck.rowCount > 0 && statusCheck.rows[0].status === 'final' && userRole !== 'admin') {
+      return res.status(409).json({ success: false, message: "Report is already final. Create an addendum." });
+    }
+
+    let finalContent = content;
+
+    // 5. Append Signature Block
+    if (user.signature_path) {
+      const sigUrl = `/api${user.signature_path}`;
+      const dateStr = new Date().toLocaleString("en-IN", { dateStyle: "long", timeStyle: "short" });
+
+      const signatureBlock = `
+        <div class="report-signature-block" style="margin-top: 40px; page-break-inside: avoid;">
+          <div style="display: flex; flex-direction: column; align-items: flex-end; text-align: right;">
+            <div style="width: 200px; text-align: center;">
+              <img src="${sigUrl}" alt="Digital Signature" style="height: 60px; max-width: 150px; object-fit: contain; margin-bottom: 5px;" />
+              <div style="font-weight: bold; font-family: sans-serif; font-size: 14px; text-transform: uppercase;">${user.full_name}</div>
+              ${user.designation ? `<div style="font-size: 11px; color: #555;">${user.designation}</div>` : ""}
+              ${user.registration_number ? `<div style="font-size: 10px; color: #777;">Reg. No: ${user.registration_number}</div>` : ""}
+              <div style="font-size: 9px; margin-top: 4px; color: #999; font-style: italic;">Digitally signed on ${dateStr}</div>
+              <div style="font-size: 8px; color: #ccc; margin-top: 2px;">RIS Verification Node</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (finalContent.includes("<!-- SIGNATURE_PLACEHOLDER -->")) {
+        finalContent = finalContent.replace("<!-- SIGNATURE_PLACEHOLDER -->", signatureBlock);
+      } else {
+        finalContent += signatureBlock;
+      }
+    }
+
+    // 6. Hashing & Signing (Medico-Legal Compliance)
+    const hash = crypto.createHash('sha256').update(finalContent).digest('hex');
+
+    // Sign the hash
+    const signer = crypto.createSign('SHA256');
+    signer.update(finalContent);
+    signer.end();
+    const digitalSignature = signer.sign(privateKey, 'base64');
+    // Note: We are using the server's key for the 'Digital Signature' of the document integrity.
+    // Ideally, each doctor would have their own key, but server-signing verifies 'RIS Integrity'.
+
+    // 7. Update Database
     await pool.query(
       `
       UPDATE pacs_reports
       SET
         content = $1,
         status  = 'final',
-        updated_at = NOW()
-      WHERE study_instance_uid = $2
+        updated_at = NOW(),
+        content_hash = $2,
+        digital_signature = $3,
+        signer_id = $4,
+        signed_at = NOW()
+      WHERE study_instance_uid = $5
       `,
-      [content, studyUID]
+      [finalContent, hash, digitalSignature, userId, studyUID]
     );
 
-    res.json({ success: true });
+    // 8. Audit Log (Explicit)
+    await pool.query(
+      `INSERT INTO audit_logs (username, action, entity, entity_id, payload) VALUES ($1, $2, $3, $4, $5)`,
+      [req.user.username, "SIGN_REPORT", "Report", studyUID, JSON.stringify({ hash, signed_by: userId })]
+    );
+
+    res.json({ success: true, message: "Report finalized and legally signed." });
   } catch (err) {
     console.error("finalizeReport:", err);
     res.status(500).json({ success: false });

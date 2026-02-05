@@ -23,4 +23,12 @@ router.delete("/:id", userController.deleteUser);
 // Avatar upload
 router.post("/:id/avatar", upload.single("profile_picture"), userController.uploadAvatar);
 
+// Signature upload
+const sigStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/signatures"),
+  filename: (req, file, cb) => cb(null, `sig_${Date.now()}${path.extname(file.originalname)}`)
+});
+const uploadSig = multer({ storage: sigStorage });
+router.post("/:id/signature", uploadSig.single("signature"), userController.uploadSignature);
+
 module.exports = router;

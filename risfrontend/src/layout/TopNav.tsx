@@ -56,6 +56,9 @@ export default function TopNav() {
 
         {open && (
           <div className="absolute right-0 mt-2 bg-white shadow-md border rounded w-40">
+            <Link to="/profile" className="block px-3 py-2 text-sm hover:bg-gray-100">
+              My Profile
+            </Link>
             <Link to="/settings" className="block px-3 py-2 text-sm hover:bg-gray-100">
               Settings
             </Link>

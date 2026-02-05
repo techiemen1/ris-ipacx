@@ -144,6 +144,8 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/dictation", require("./routes/dictationRoutes"));
 app.use("/api/modalities", require("./routes/modalityRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
+app.use("/api/dicom", require("./routes/dicomRoutes"));
+app.use("/api/share", require("./routes/shareRoutes"));
 
 const adminRoutes = require("./routes/adminRoutes");
 app.use("/api/admin", adminRoutes);
